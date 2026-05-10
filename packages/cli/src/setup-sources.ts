@@ -264,11 +264,13 @@ async function chooseSourceCredentialRef(input: {
       const value = await input.prompts.password({ message: input.label });
       if (value === undefined) continue;
       if (!value.trim()) continue;
-      return await writeProjectLocalSecretReference({
+      const ref = await writeProjectLocalSecretReference({
         projectDir: input.projectDir,
         fileName: input.secretFileName,
         value,
       });
+      input.prompts.log?.(`Saved to .ktx/secrets/${input.secretFileName}`);
+      return ref;
     }
     return `env:${input.envName}`;
   }
@@ -297,11 +299,14 @@ async function chooseGitAuthCredentialRef(input: {
       const value = await input.prompts.password({ message: 'Git access token' });
       if (value === undefined) continue;
       if (!value.trim()) continue;
-      return await writeProjectLocalSecretReference({
+      const fileName = `${input.connectionId}-auth-token`;
+      const ref = await writeProjectLocalSecretReference({
         projectDir: input.projectDir,
-        fileName: `${input.connectionId}-auth-token`,
+        fileName,
         value,
       });
+      input.prompts.log?.(`Saved to .ktx/secrets/${fileName}`);
+      return ref;
     }
     return 'env:GITHUB_TOKEN';
   }
@@ -634,8 +639,37 @@ async function defaultValidateNotion(connection: KtxProjectConnectionConfig): Pr
   return { ok: true, detail: `roots=${roots.length}` };
 }
 
+interface MappingJsonOutput {
+  connectionId: string;
+  refresh: { ok: boolean; output: string[] };
+  validation: { ok: boolean; output: string[] };
+  mappings: unknown[];
+}
+
+function summarizeMappingResult(parsed: MappingJsonOutput): string {
+  const mappingCount = parsed.mappings.length;
+  const mappingNoun = mappingCount === 1 ? 'mapping' : 'mappings';
+  return `Mapping validated — ${mappingCount} ${mappingNoun} configured`;
+}
+
 async function defaultRunMapping(projectDir: string, connectionId: string, io: KtxCliIo): Promise<number> {
-  return await runKtxConnection({ command: 'map', projectDir, sourceConnectionId: connectionId, json: false }, io);
+  let captured = '';
+  const captureIo: KtxCliIo = {
+    stdout: { write(chunk: string) { captured += chunk; } },
+    stderr: io.stderr,
+  };
+  const code = await runKtxConnection(
+    { command: 'map', projectDir, sourceConnectionId: connectionId, json: true },
+    captureIo,
+  );
+  if (code !== 0) return code;
+  try {
+    const parsed = JSON.parse(captured.trim()) as MappingJsonOutput;
+    io.stdout.write(`${summarizeMappingResult(parsed)}\n`);
+  } catch {
+    io.stdout.write(captured);
+  }
+  return 0;
 }
 
 async function defaultRunInitialIngest(
@@ -1403,6 +1437,7 @@ export async function runKtxSetupSourcesStep(
           return { status: 'failed', projectDir: args.projectDir };
         }
         if (source === 'metabase' || source === 'looker') {
+          prompts.log?.(`Validating ${sourceLabel(source)} mapping…`);
           const mappingCode = await (deps.runMapping ?? defaultRunMapping)(args.projectDir, connectionId, io);
           if (mappingCode !== 0) {
             await rollback?.();
