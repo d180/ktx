@@ -1,0 +1,5 @@
+{
+  "title": "Guides",
+  "defaultOpen": false,
+  "pages": ["building-context", "writing-context", "serving-agents"]
+}
