@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 import type { ChunkResult, DiffSet, ScopeDescriptor, WorkUnit } from '../../types.js';
+import { isHistoricSqlPatternInputShardPath } from './pattern-inputs.js';
 import { stagedManifestSchema, stagedPatternsInputSchema, stagedTableInputSchema } from './types.js';
 
 async function walk(root: string): Promise<string[]> {
@@ -46,20 +47,26 @@ export async function chunkHistoricSqlUnifiedStagedDir(stagedDir: string, diffSe
     });
   }
 
-  if (files.includes('patterns-input.json') && touchedPath('patterns-input.json', touched)) {
-    stagedPatternsInputSchema.parse(await readJson(stagedDir, 'patterns-input.json'));
+  for (const path of files.filter(isHistoricSqlPatternInputShardPath)) {
+    if (!touchedPath(path, touched)) {
+      continue;
+    }
+    stagedPatternsInputSchema.parse(await readJson(stagedDir, path));
+    const shardLabel = path.replace(/^patterns-input\//, '').replace(/\.json$/, '');
     workUnits.push({
-      unitKey: 'historic-sql-patterns',
-      displayLabel: 'Historic SQL cross-table patterns',
-      rawFiles: ['patterns-input.json'],
+      unitKey: `historic-sql-patterns-${safeUnitKey(shardLabel)}`,
+      displayLabel: `Historic SQL cross-table patterns: ${shardLabel}`,
+      rawFiles: [path],
       dependencyPaths: ['manifest.json'],
-      peerFileIndex: files.filter((file) => file !== 'patterns-input.json' && file !== 'manifest.json').sort(),
+      peerFileIndex: files.filter((file) => file !== path && file !== 'manifest.json').sort(),
       notes:
-        'Use historic_sql_patterns. Read patterns-input.json and emit pattern objects with emit_historic_sql_evidence. Do not call wiki_write or sl_write_source.',
+        `Use historic_sql_patterns. Read ${path} and emit pattern objects with emit_historic_sql_evidence using rawPath "${path}". Do not call wiki_write or sl_write_source.`,
     });
   }
 
-  const deleted = diffSet?.deleted.filter((path) => path === 'patterns-input.json' || /^tables\/.+\.json$/.test(path)).sort();
+  const deleted = diffSet?.deleted
+    .filter((path) => isHistoricSqlPatternInputShardPath(path) || /^tables\/.+\.json$/.test(path))
+    .sort();
   return {
     workUnits,
     eviction: deleted && deleted.length > 0 ? { deletedRawPaths: deleted } : undefined,
@@ -84,6 +91,9 @@ export async function describeHistoricSqlUnifiedScope(stagedDir: string): Promis
   return {
     fingerprint,
     isPathInScope: (rawPath) =>
-      rawPath === 'manifest.json' || rawPath === 'patterns-input.json' || /^tables\/.+\.json$/.test(rawPath),
+      rawPath === 'manifest.json' ||
+      rawPath === 'patterns-input.json' ||
+      isHistoricSqlPatternInputShardPath(rawPath) ||
+      /^tables\/.+\.json$/.test(rawPath),
   };
 }

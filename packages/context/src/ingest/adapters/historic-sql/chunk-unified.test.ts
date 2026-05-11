@@ -45,8 +45,20 @@ async function writeUnifiedStagedDir(root: string): Promise<void> {
     templates: [
       {
         id: 'orders',
-        canonicalSql: 'select * from public.orders',
-        tablesTouched: ['public.orders'],
+        canonicalSql: 'select * from public.orders join public.customers on true',
+        tablesTouched: ['public.orders', 'public.customers'],
+        executionsBucket: '10-100',
+        distinctUsersBucket: '2-5',
+        dialect: 'postgres',
+      },
+    ],
+  });
+  await writeJson(root, 'patterns-input/part-0001.json', {
+    templates: [
+      {
+        id: 'orders',
+        canonicalSql: 'select * from public.orders join public.customers on true',
+        tablesTouched: ['public.orders', 'public.customers'],
         executionsBucket: '10-100',
         distinctUsersBucket: '2-5',
         dialect: 'postgres',
@@ -71,11 +83,11 @@ describe('chunkHistoricSqlUnifiedStagedDir', () => {
         notes: expect.stringContaining('historic_sql_table_digest'),
       }),
       expect.objectContaining({
-        unitKey: 'historic-sql-patterns',
-        displayLabel: 'Historic SQL cross-table patterns',
-        rawFiles: ['patterns-input.json'],
+        unitKey: 'historic-sql-patterns-part-0001',
+        displayLabel: 'Historic SQL cross-table patterns: part-0001',
+        rawFiles: ['patterns-input/part-0001.json'],
         dependencyPaths: ['manifest.json'],
-        notes: expect.stringContaining('historic_sql_patterns'),
+        notes: expect.stringContaining('patterns-input/part-0001.json'),
       }),
     ]);
     expect(result.workUnits[0]?.notes).toContain('emit_historic_sql_evidence');
@@ -92,7 +104,7 @@ describe('chunkHistoricSqlUnifiedStagedDir', () => {
         added: [],
         modified: ['tables/public.orders.json'],
         deleted: [],
-        unchanged: ['manifest.json', 'patterns-input.json'],
+        unchanged: ['manifest.json', 'patterns-input.json', 'patterns-input/part-0001.json'],
       }),
     ).resolves.toMatchObject({
       workUnits: [expect.objectContaining({ unitKey: 'historic-sql-table-public-orders' })],
@@ -101,12 +113,23 @@ describe('chunkHistoricSqlUnifiedStagedDir', () => {
     await expect(
       chunkHistoricSqlUnifiedStagedDir(stagedDir, {
         added: [],
-        modified: ['patterns-input.json'],
+        modified: ['patterns-input/part-0001.json'],
         deleted: [],
-        unchanged: ['manifest.json', 'tables/public.orders.json'],
+        unchanged: ['manifest.json', 'patterns-input.json', 'tables/public.orders.json'],
       }),
     ).resolves.toMatchObject({
-      workUnits: [expect.objectContaining({ unitKey: 'historic-sql-patterns' })],
+      workUnits: [expect.objectContaining({ unitKey: 'historic-sql-patterns-part-0001' })],
+    });
+
+    await expect(
+      chunkHistoricSqlUnifiedStagedDir(stagedDir, {
+        added: [],
+        modified: ['patterns-input.json'],
+        deleted: [],
+        unchanged: ['manifest.json', 'patterns-input/part-0001.json', 'tables/public.orders.json'],
+      }),
+    ).resolves.toMatchObject({
+      workUnits: [],
     });
   });
 
@@ -118,7 +141,42 @@ describe('chunkHistoricSqlUnifiedStagedDir', () => {
 
     expect(scope.isPathInScope('manifest.json')).toBe(true);
     expect(scope.isPathInScope('patterns-input.json')).toBe(true);
+    expect(scope.isPathInScope('patterns-input/part-0001.json')).toBe(true);
+    expect(scope.isPathInScope('patterns-input/part-1.json')).toBe(false);
     expect(scope.isPathInScope('tables/public.orders.json')).toBe(true);
     expect(scope.isPathInScope('templates/old/page.md')).toBe(false);
+  });
+
+  it('emits one patterns WorkUnit per changed shard', async () => {
+    const stagedDir = await tempDir();
+    await writeUnifiedStagedDir(stagedDir);
+    await writeJson(stagedDir, 'patterns-input/part-0002.json', {
+      templates: [
+        {
+          id: 'line-items',
+          canonicalSql: 'select * from public.orders join public.line_items on true',
+          tablesTouched: ['public.orders', 'public.line_items'],
+          executionsBucket: '10-100',
+          distinctUsersBucket: '2-5',
+          dialect: 'postgres',
+        },
+      ],
+    });
+
+    const result = await chunkHistoricSqlUnifiedStagedDir(stagedDir, {
+      added: ['patterns-input/part-0002.json'],
+      modified: ['patterns-input/part-0001.json'],
+      deleted: [],
+      unchanged: ['manifest.json', 'patterns-input.json', 'tables/public.orders.json'],
+    });
+
+    expect(result.workUnits.map((unit) => unit.unitKey)).toEqual([
+      'historic-sql-patterns-part-0001',
+      'historic-sql-patterns-part-0002',
+    ]);
+    expect(result.workUnits.map((unit) => unit.rawFiles)).toEqual([
+      ['patterns-input/part-0001.json'],
+      ['patterns-input/part-0002.json'],
+    ]);
   });
 });
