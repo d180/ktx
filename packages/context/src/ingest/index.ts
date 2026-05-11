@@ -331,6 +331,15 @@ export { PostgresPgssQueryHistoryReader } from './adapters/historic-sql/postgres
 export { SnowflakeHistoricSqlQueryHistoryReader } from './adapters/historic-sql/snowflake-query-history-reader.js';
 export { stageHistoricSqlTemplates } from './adapters/historic-sql/stage.js';
 export {
+  patternOutputSchema,
+  patternsArraySchema,
+  tableUsageOutputSchema,
+} from './adapters/historic-sql/skill-schemas.js';
+export type {
+  PatternOutput,
+  TableUsageOutput,
+} from './adapters/historic-sql/skill-schemas.js';
+export {
   pgssBaselinePath,
   readPgssBaseline,
   stagePgStatStatementsTemplates,
