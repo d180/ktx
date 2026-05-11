@@ -99,11 +99,11 @@ describe('parseScanSummary', () => {
 
 describe('parseIngestSummary', () => {
   it('extracts work units and saved memory', () => {
-    expect(parseIngestSummary('Work units: 5\nSaved memory: 3 wiki, 2 SL')).toBe('5 items indexed · 3 wiki, 2 SL');
+    expect(parseIngestSummary('Work units: 5\nSaved memory: 3 wiki, 2 SL')).toBe('3 wiki, 2 SL');
   });
 
   it('extracts work units alone when no saved memory', () => {
-    expect(parseIngestSummary('Work units: 5\nStatus: done')).toBe('5 items indexed');
+    expect(parseIngestSummary('Work units: 5\nStatus: done')).toBe('5 work units');
   });
 
   it('extracts saved memory alone when no work units', () => {
@@ -466,6 +466,41 @@ describe('runContextBuild', () => {
       { connectionId: 'warehouse', status: 'done' },
       { connectionId: 'dbt_main', status: 'done' },
     ]);
+  });
+
+  it('returns report IDs and artifact paths parsed from target output', async () => {
+    const io = makeIo();
+    const project = projectWithConnections({
+      warehouse: { driver: 'postgres' },
+      dbt_main: { driver: 'dbt' },
+    });
+    const executeTarget = vi.fn(async (target, _args, targetIo) => {
+      if (target.operation === 'scan') {
+        targetIo.stdout.write('Report: raw-sources/warehouse/live-database/sync-1/scan-report.json\n');
+        targetIo.stdout.write('Raw sources: raw-sources/warehouse/live-database/sync-1\n');
+      } else {
+        targetIo.stdout.write('Report: report-dbt-1\n');
+        targetIo.stdout.write('Saved memory: 2 wiki, 3 SL\n');
+      }
+      return successResult(target.connectionId, target.driver, target.operation);
+    });
+
+    const result = await runContextBuild(
+      project,
+      { projectDir: '/tmp/project', inputMode: 'disabled' },
+      io.io,
+      { executeTarget, now: () => 1000 },
+    );
+
+    expect(result).toMatchObject({
+      exitCode: 0,
+      detached: false,
+      reportIds: ['report-dbt-1'],
+      artifactPaths: [
+        'raw-sources/warehouse/live-database/sync-1/scan-report.json',
+        'raw-sources/warehouse/live-database/sync-1',
+      ],
+    });
   });
 });
 

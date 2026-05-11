@@ -44,6 +44,8 @@ export interface ContextBuildArgs {
 export interface ContextBuildResult {
   exitCode: number;
   detached: boolean;
+  reportIds?: string[];
+  artifactPaths?: string[];
 }
 
 export interface ContextBuildSourceProgressUpdate {
@@ -237,12 +239,41 @@ export function parseScanSummary(output: string): string | null {
 }
 
 export function parseIngestSummary(output: string): string | null {
-  const parts: string[] = [];
-  const workUnits = output.match(/Work units: (\d+)/);
-  if (workUnits) parts.push(`${workUnits[1]} items indexed`);
   const savedMemory = output.match(/Saved memory: (.+)/);
-  if (savedMemory) parts.push(savedMemory[1]);
-  return parts.length > 0 ? parts.join(' · ') : null;
+  if (savedMemory) return savedMemory[1];
+  const workUnits = output.match(/Work units: (\d+)/);
+  if (workUnits) return `${workUnits[1]} work units`;
+  return null;
+}
+
+function collectOutputMetadata(
+  output: string,
+  operation: KtxPublicIngestPlanTarget['operation'],
+): { reportIds: string[]; artifactPaths: string[] } {
+  const reportIds = new Set<string>();
+  const artifactPaths = new Set<string>();
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    const reportLine = trimmed.match(/^Report:\s*(.+)$/);
+    if (reportLine) {
+      const value = reportLine[1].trim();
+      if (value && value !== 'none') {
+        if (operation === 'scan') artifactPaths.add(value);
+        else reportIds.add(value);
+      }
+    }
+    const rawSourcesLine = trimmed.match(/^Raw sources:\s*(.+)$/);
+    if (rawSourcesLine) {
+      const value = rawSourcesLine[1].trim();
+      if (value && value !== 'none') artifactPaths.add(value);
+    }
+    if (operation === 'source-ingest') {
+      for (const match of trimmed.matchAll(/\breport=([^\s]+)/g)) {
+        reportIds.add(match[1]);
+      }
+    }
+  }
+  return { reportIds: [...reportIds], artifactPaths: [...artifactPaths] };
 }
 
 interface CapturedIo {
@@ -428,6 +459,8 @@ export async function runContextBuild(
 
   const orderedTargets = [...state.primarySources, ...state.contextSources];
   const execTarget = deps.executeTarget ?? executePublicIngestTarget;
+  const reportIds = new Set<string>();
+  const artifactPaths = new Set<string>();
 
   let detached = false;
   let cleanupKeystroke: (() => void) | null = null;
@@ -492,10 +525,14 @@ export async function runContextBuild(
       targetState.status = failed ? 'failed' : 'done';
       targetState.detailLine = null;
       if (!failed) {
+        const capturedOutput = capture.captured();
+        const metadata = collectOutputMetadata(capturedOutput, targetState.target.operation);
+        for (const reportId of metadata.reportIds) reportIds.add(reportId);
+        for (const artifactPath of metadata.artifactPaths) artifactPaths.add(artifactPath);
         targetState.summaryText =
           targetState.target.operation === 'scan'
-            ? parseScanSummary(capture.captured())
-            : parseIngestSummary(capture.captured());
+            ? parseScanSummary(capturedOutput)
+            : parseIngestSummary(capturedOutput);
       }
       if (failed) hasFailure = true;
 
@@ -521,5 +558,10 @@ export async function runContextBuild(
     paint(false);
   }
 
-  return { exitCode: hasFailure ? 1 : 0, detached: false };
+  return {
+    exitCode: hasFailure ? 1 : 0,
+    detached: false,
+    ...(reportIds.size > 0 ? { reportIds: [...reportIds] } : {}),
+    ...(artifactPaths.size > 0 ? { artifactPaths: [...artifactPaths] } : {}),
+  };
 }

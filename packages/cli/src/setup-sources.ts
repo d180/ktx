@@ -463,7 +463,7 @@ function buildMetabaseConnection(args: KtxSetupSourcesArgs): KtxProjectConnectio
     mappings: {
       databaseMappings: { [String(args.metabaseDatabaseId)]: args.sourceWarehouseConnectionId },
       syncEnabled: { [String(args.metabaseDatabaseId)]: true },
-      syncMode: 'ONLY',
+      syncMode: 'ALL',
     },
   };
 }

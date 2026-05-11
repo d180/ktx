@@ -205,7 +205,7 @@ describe('setup sources step', () => {
       mappings: {
         databaseMappings: { '1': 'warehouse' },
         syncEnabled: { '1': true },
-        syncMode: 'ONLY',
+        syncMode: 'ALL',
       },
     });
     expect(runMapping).toHaveBeenCalledWith(projectDir, 'prod_metabase', io.io);
@@ -707,7 +707,7 @@ describe('setup sources step', () => {
           mappings: {
             databaseMappings: { '1': 'warehouse' },
             syncEnabled: { '1': true },
-            syncMode: 'ONLY',
+            syncMode: 'ALL',
           },
         },
         deps: {

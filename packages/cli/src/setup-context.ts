@@ -592,12 +592,16 @@ async function runBuild(
       },
     },
   );
+  const completedReportIds = buildResult.reportIds ?? [];
+  const completedArtifactPaths = buildResult.artifactPaths ?? [];
   if (buildResult.detached) {
     const updatedAt = now().toISOString();
     await writeKtxSetupContextState(args.projectDir, {
       ...runningState,
       status: 'detached',
       updatedAt,
+      reportIds: completedReportIds,
+      artifactPaths: completedArtifactPaths,
       ...(lastSourceProgress ? { sourceProgress: lastSourceProgress } : {}),
     });
     return { status: 'detached', projectDir: args.projectDir, runId };
@@ -608,6 +612,8 @@ async function runBuild(
       ...runningState,
       status: 'failed',
       updatedAt,
+      reportIds: completedReportIds,
+      artifactPaths: completedArtifactPaths,
       retryableFailedTargets: [...targets.primarySourceConnectionIds, ...targets.contextSourceConnectionIds],
       failureReason: 'Context build failed.',
       ...(lastSourceProgress ? { sourceProgress: lastSourceProgress } : {}),
@@ -622,6 +628,8 @@ async function runBuild(
       ...runningState,
       status: 'failed',
       updatedAt,
+      reportIds: completedReportIds,
+      artifactPaths: completedArtifactPaths,
       retryableFailedTargets: readiness.failedTargets ?? [],
       failureReason: readiness.details.join(' '),
       ...(lastSourceProgress ? { sourceProgress: lastSourceProgress } : {}),
@@ -640,6 +648,8 @@ async function runBuild(
     status: 'completed',
     updatedAt: completedAt,
     completedAt,
+    reportIds: completedReportIds,
+    artifactPaths: completedArtifactPaths,
     retryableFailedTargets: [],
     ...(lastSourceProgress ? { sourceProgress: lastSourceProgress } : {}),
   });

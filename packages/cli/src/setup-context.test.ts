@@ -166,7 +166,12 @@ describe('setup context build state', () => {
   it('runs setup context build, verifies readiness, and marks context complete', async () => {
     await writeReadyProject(tempDir);
     const io = makeIo();
-    const runContextBuildMock = vi.fn(async () => ({ exitCode: 0, detached: false }));
+    const runContextBuildMock = vi.fn(async () => ({
+      exitCode: 0,
+      detached: false,
+      reportIds: ['report-docs-1'],
+      artifactPaths: ['raw-sources/warehouse/live-database/sync-1/scan-report.json'],
+    }));
     const verifyContextReady = vi.fn(async () => ({
       ready: true,
       agentContextReady: true,
@@ -204,6 +209,8 @@ describe('setup context build state', () => {
       runId: 'setup-context-local-abc123',
       status: 'completed',
       completedAt: '2026-05-09T10:00:00.000Z',
+      reportIds: ['report-docs-1'],
+      artifactPaths: ['raw-sources/warehouse/live-database/sync-1/scan-report.json'],
     });
     expect(io.stdout()).toContain('KTX context is ready for agents.');
   });

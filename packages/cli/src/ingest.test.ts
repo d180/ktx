@@ -222,6 +222,39 @@ function completedLocalBundleRun(input: RunLocalIngestOptions, jobId: string): L
   };
 }
 
+function failedLocalBundleRun(input: RunLocalIngestOptions, jobId: string): LocalIngestResult {
+  const failedWorkUnit = {
+    ...bundleReportSnapshot().body.workUnits[0],
+    status: 'failed' as const,
+    reason: 'writer tool failed',
+    actions: [],
+    touchedSlSources: [],
+  };
+  const nextReport = localFakeBundleReport(jobId, {
+    id: 'report-failed-1',
+    runId: 'run-failed-1',
+    connectionId: input.connectionId,
+    sourceKey: input.adapter,
+    body: {
+      workUnits: [failedWorkUnit],
+      failedWorkUnits: [failedWorkUnit.unitKey],
+    },
+  });
+  return {
+    result: {
+      jobId,
+      runId: nextReport.runId,
+      syncId: nextReport.body.syncId,
+      diffSummary: nextReport.body.diffSummary,
+      workUnitCount: nextReport.body.workUnits.length,
+      failedWorkUnits: nextReport.body.failedWorkUnits,
+      artifactsWritten: nextReport.body.provenanceRows.length,
+      commitSha: nextReport.body.commitSha,
+    },
+    report: nextReport,
+  };
+}
+
 class CliLookerSlWritingAgentRunner extends AgentRunnerService {
   override runLoop = vi.fn(async (params: RunLoopParams) => {
     if (
@@ -621,7 +654,10 @@ function makeCliLookerParser() {
   };
 }
 
-function localFakeBundleReport(jobId: string, overrides: Partial<IngestReportSnapshot> = {}): IngestReportSnapshot {
+function localFakeBundleReport(
+  jobId: string,
+  overrides: Partial<Omit<IngestReportSnapshot, 'body'>> & { body?: Partial<IngestReportSnapshot['body']> } = {},
+): IngestReportSnapshot {
   const report = bundleReportSnapshot();
   return {
     ...report,
@@ -823,6 +859,77 @@ describe('runKtxIngest', () => {
     expect(io.stdout()).toContain('Metabase fan-out: all_succeeded');
     expect(io.stdout()).toContain('warehouse_a');
     expect(io.stdout()).toContain('metabase-child-1');
+    expect(io.stderr()).toBe('');
+  });
+
+  it('returns a non-zero code when Metabase fan-out has failed children', async () => {
+    const projectDir = join(tempDir, 'project');
+    await initKtxProject({ projectDir, projectName: 'warehouse' });
+    await writeMetabaseConfig(projectDir);
+    const io = makeIo();
+    const report = localFakeBundleReport('metabase-child-1', {
+      id: 'report-metabase-child-1',
+      runId: 'run-a',
+      jobId: 'metabase-child-1',
+      connectionId: 'warehouse_a',
+      sourceKey: 'metabase',
+      body: {
+        failedWorkUnits: ['metabase-db-1'],
+        workUnits: [
+          {
+            unitKey: 'metabase-db-1',
+            rawFiles: ['cards/1.json'],
+            status: 'failed',
+            reason: 'tool write failed',
+            actions: [],
+            touchedSlSources: [],
+          },
+        ],
+      },
+    });
+
+    await expect(
+      runKtxIngest(
+        {
+          command: 'run',
+          projectDir,
+          connectionId: 'prod-metabase',
+          adapter: 'metabase',
+          outputMode: 'plain',
+        },
+        io.io,
+        {
+          runLocalMetabaseIngest: async () => ({
+            metabaseConnectionId: 'prod-metabase',
+            status: 'partial_failure',
+            totals: { workUnits: 1, failedWorkUnits: 1 },
+            children: [
+              {
+                jobId: 'metabase-child-1',
+                metabaseConnectionId: 'prod-metabase',
+                metabaseDatabaseId: 1,
+                targetConnectionId: 'warehouse_a',
+                result: {
+                  jobId: 'metabase-child-1',
+                  runId: 'run-a',
+                  syncId: 'sync-a',
+                  diffSummary: { added: 0, modified: 0, deleted: 0, unchanged: 0 },
+                  workUnitCount: 1,
+                  failedWorkUnits: ['metabase-db-1'],
+                  artifactsWritten: 0,
+                  commitSha: null,
+                },
+                report,
+              },
+            ],
+          }),
+        },
+      ),
+    ).resolves.toBe(1);
+
+    expect(io.stdout()).toContain('Metabase fan-out: partial_failure');
+    expect(io.stdout()).toContain('Failed work units: 1');
+    expect(io.stdout()).toContain('status=error');
     expect(io.stderr()).toBe('');
   });
 
@@ -1141,6 +1248,38 @@ describe('runKtxIngest', () => {
     expect(io.stdout()).toContain('Report: report-live-1\n');
     expect(io.stdout()).toContain('Job: local-job-1\n');
     expect(io.stdout()).toContain('Diff: +2/~0/-0/=0\n');
+  });
+
+  it('returns a non-zero code when local ingest reports failed work units', async () => {
+    const projectDir = join(tempDir, 'project');
+    await initKtxProject({ projectDir, projectName: 'warehouse' });
+    await writeWarehouseConfig(projectDir);
+    const sourceDir = join(tempDir, 'source');
+    await mkdir(join(sourceDir, 'orders'), { recursive: true });
+    await writeFile(join(sourceDir, 'orders', 'orders.json'), '{"name":"orders"}\n', 'utf-8');
+    const runLocal = vi.fn(async (input: RunLocalIngestOptions) => failedLocalBundleRun(input, 'local-job-failed'));
+
+    const io = makeIo();
+    await expect(
+      runKtxIngest(
+        {
+          command: 'run',
+          projectDir,
+          connectionId: 'warehouse',
+          adapter: 'fake',
+          sourceDir,
+          outputMode: 'plain',
+        },
+        io.io,
+        {
+          runLocalIngest: runLocal,
+          jobIdFactory: () => 'local-job-failed',
+        },
+      ),
+    ).resolves.toBe(1);
+
+    expect(io.stderr()).toBe('');
+    expect(io.stdout()).toContain('Status: error\n');
   });
 
   it('passes the debug LLM request file to local ingest runs', async () => {

@@ -24,7 +24,12 @@ import {
 import { type KtxSetupEmbeddingsDeps, runKtxSetupEmbeddingsStep } from './setup-embeddings.js';
 import { type KtxSetupModelDeps, runKtxSetupAnthropicModelStep } from './setup-models.js';
 import { type KtxSetupProjectDeps, runKtxSetupProjectStep } from './setup-project.js';
-import { isKtxSetupReady, type KtxSetupReadyMenuDeps, runKtxSetupReadyChangeMenu } from './setup-ready-menu.js';
+import {
+  isKtxPreAgentSetupReady,
+  isKtxSetupReady,
+  type KtxSetupReadyMenuDeps,
+  runKtxSetupReadyChangeMenu,
+} from './setup-ready-menu.js';
 import { type KtxSetupSourcesDeps, type KtxSetupSourceType, runKtxSetupSourcesStep } from './setup-sources.js';
 import { withMenuOptionsSpacing } from './prompt-navigation.js';
 import {
@@ -531,9 +536,13 @@ async function runKtxSetupInner(args: KtxSetupArgs, io: KtxCliIo, deps: KtxSetup
       }
     }
 
-    if (args.inputMode !== 'disabled' && !agentsRequested && isKtxSetupReady(currentStatus)) {
-      readyAction = (await runKtxSetupReadyChangeMenu(currentStatus, deps.readyMenuDeps)).action;
-      if (readyAction === 'exit') return 0;
+    if (args.inputMode !== 'disabled' && !agentsRequested) {
+      if (isKtxSetupReady(currentStatus)) {
+        readyAction = (await runKtxSetupReadyChangeMenu(currentStatus, deps.readyMenuDeps)).action;
+        if (readyAction === 'exit') return 0;
+      } else if (isKtxPreAgentSetupReady(currentStatus)) {
+        readyAction = 'agents';
+      }
     }
 
     const runOnly = readyAction;
