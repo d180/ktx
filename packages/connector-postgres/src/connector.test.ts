@@ -137,11 +137,11 @@ describe('KtxPostgresScanConnector', () => {
         readonly: true,
       },
       env: {
-        DEMO_DATABASE_URL: 'postgresql://reader@start.kaelio.com:5432/demo?sslmode=prefer',
+        DEMO_DATABASE_URL: 'postgresql://reader@demo.example.test:5432/demo?sslmode=prefer',
       },
     });
     expect(libpqPreferConfig).toMatchObject({
-      host: 'start.kaelio.com',
+      host: 'demo.example.test',
       port: 5432,
       database: 'demo',
       user: 'reader',
