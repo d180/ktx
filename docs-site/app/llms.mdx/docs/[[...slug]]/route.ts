@@ -3,7 +3,6 @@ import {
   getLlmDocsPages,
   getPageMarkdown,
 } from "@/lib/llm-docs";
-import { notFound } from "next/navigation";
 
 export const dynamic = "force-static";
 
@@ -13,7 +12,14 @@ export async function GET(
 ) {
   const params = await props.params;
   const page = getLlmDocsPage(params.slug);
-  if (!page) notFound();
+  if (!page) {
+    return new Response("Documentation page not found.\n", {
+      status: 404,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+      },
+    });
+  }
 
   return new Response(await getPageMarkdown(page), {
     headers: {
