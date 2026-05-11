@@ -7,11 +7,12 @@ preloaded, generates query workload under separate users, runs `ktx setup` with
 
 - `manifest.json`
 - `tables/*.json`
-- `patterns-input.json`
+- `patterns-input.json` as the full audit input
+- `patterns-input/part-*.json` as bounded pattern WorkUnit shards
 
 The smoke also runs the same workload twice and verifies the second stage-only
-run has `workUnitCount: 0`, which proves unchanged bucketed table and pattern
-inputs do not schedule LLM work.
+run has `workUnitCount: 0`, which proves unchanged bucketed table inputs and
+unchanged bounded pattern shards do not schedule LLM work.
 
 ## Prerequisites
 
@@ -114,7 +115,9 @@ find /tmp/ktx-postgres-historic/raw-sources/warehouse/historic-sql -name manifes
 The manifest should have `source: "historic-sql"`, `dialect: "postgres"`,
 positive `snapshotRowCount`, positive `touchedTableCount`, numeric
 `parseFailures`, `warnings`, and `probeWarnings`. The same directory should
-contain `patterns-input.json` and one `tables/*.json` file per touched table.
+contain `patterns-input.json`, at least one `patterns-input/part-*.json` pattern
+shard for cross-table candidates, and one `tables/*.json` file per touched
+table.
 
 ## Troubleshooting
 
