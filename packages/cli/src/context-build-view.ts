@@ -46,11 +46,21 @@ export interface ContextBuildResult {
   detached: boolean;
 }
 
+export interface ContextBuildSourceProgressUpdate {
+  connectionId: string;
+  operation: 'scan' | 'source-ingest';
+  status: 'queued' | 'running' | 'done' | 'failed';
+  startedAtMs?: number;
+  elapsedMs?: number;
+  summaryText?: string;
+}
+
 export interface ContextBuildDeps {
   executeTarget?: typeof executePublicIngestTarget;
   now?: () => number;
   setupKeystroke?: (onDetach: () => void, onCtrlC: () => void) => (() => void) | null;
   onDetach?: () => void;
+  onSourceProgress?: (sources: ContextBuildSourceProgressUpdate[]) => void;
 }
 
 // --- Rendering ---
@@ -165,7 +175,7 @@ function resumeCommand(projectDir?: string): string {
 
 export function renderContextBuildView(
   state: ContextBuildViewState,
-  options: { styled?: boolean; showHint?: boolean; projectDir?: string } = {},
+  options: { styled?: boolean; showHint?: boolean; hintText?: string; projectDir?: string } = {},
 ): string {
   const styled = options.styled ?? true;
   const width = columnWidth(state);
@@ -203,7 +213,8 @@ export function renderContextBuildView(
   }
 
   if (options.showHint && hasActive) {
-    const hint = `  d to detach · ${resumeCommand(options.projectDir)} to resume`;
+    const hintContent = options.hintText ?? `d to detach · ${resumeCommand(options.projectDir)} to resume`;
+    const hint = `  ${hintContent}`;
     lines.push(styled ? dim(hint) : hint);
     lines.push('');
   }
@@ -261,9 +272,45 @@ function createCaptureIo(onProgress: (message: string) => void, isTTY: boolean):
   };
 }
 
+// --- Source progress helpers ---
+
+function collectSourceProgress(targets: ContextBuildTargetState[]): ContextBuildSourceProgressUpdate[] {
+  return targets.map((t) => ({
+    connectionId: t.target.connectionId,
+    operation: t.target.operation,
+    status: t.status,
+    ...(t.startedAt !== null ? { startedAtMs: t.startedAt } : {}),
+    ...(t.elapsedMs > 0 ? { elapsedMs: t.elapsedMs } : {}),
+    ...(t.summaryText ? { summaryText: t.summaryText } : {}),
+  }));
+}
+
+export function viewStateFromSourceProgress(
+  sources: ContextBuildSourceProgressUpdate[],
+  now: number,
+  startedAtMs?: number,
+): ContextBuildViewState {
+  const makeTarget = (s: ContextBuildSourceProgressUpdate): ContextBuildTargetState => ({
+    target: { connectionId: s.connectionId, driver: '', operation: s.operation, debugCommand: '', steps: [] },
+    status: s.status,
+    detailLine: null,
+    summaryText: s.summaryText ?? null,
+    startedAt: s.startedAtMs ?? null,
+    elapsedMs: s.status === 'running' && s.startedAtMs ? now - s.startedAtMs : (s.elapsedMs ?? 0),
+  });
+
+  return {
+    primarySources: sources.filter((s) => s.operation === 'scan').map(makeTarget),
+    contextSources: sources.filter((s) => s.operation === 'source-ingest').map(makeTarget),
+    frame: 0,
+    startedAt: startedAtMs ?? null,
+    totalElapsedMs: startedAtMs ? now - startedAtMs : 0,
+  };
+}
+
 // --- Repaint ---
 
-function createRepainter(io: KtxCliIo) {
+export function createRepainter(io: KtxCliIo) {
   let lastLineCount = 0;
 
   return {
@@ -397,7 +444,6 @@ export async function runContextBuild(
         const bg = spawnBackgroundBuild(args.projectDir);
         io.stdout.write('\n\nContext build continuing in the background.\n');
         if (bg) io.stdout.write(`Log: ${bg.logPath}\n`);
-        io.stdout.write(`Status: ktx setup context status --project-dir ${resolve(args.projectDir)}\n`);
         io.stdout.write(`Resume: ${resumeCommand(args.projectDir)}\n`);
         process.exit(0);
       },
@@ -428,6 +474,7 @@ export async function runContextBuild(
       targetState.status = 'running';
       targetState.startedAt = nowFn();
       paint(true);
+      deps.onSourceProgress?.(collectSourceProgress(orderedTargets));
 
       const capture = createCaptureIo(
         (message) => {
@@ -452,6 +499,7 @@ export async function runContextBuild(
       if (failed) hasFailure = true;
 
       paint(true);
+      deps.onSourceProgress?.(collectSourceProgress(orderedTargets));
     }
   } finally {
     if (spinnerInterval) clearInterval(spinnerInterval);

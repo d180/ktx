@@ -8,6 +8,7 @@ import {
   parseScanSummary,
   renderContextBuildView,
   runContextBuild,
+  viewStateFromSourceProgress,
 } from './context-build-view.js';
 
 function makeIo(options: { isTTY?: boolean } = {}) {
@@ -423,5 +424,98 @@ describe('runContextBuild', () => {
     expect(io.stdout()).toContain('Context build continuing in the background.');
     expect(io.stdout()).toContain('Resume: ktx setup --project-dir /tmp/project');
     mockExit.mockRestore();
+  });
+
+  it('calls onSourceProgress when sources start and finish', async () => {
+    const io = makeIo();
+    const project = projectWithConnections({
+      warehouse: { driver: 'postgres' },
+      dbt_main: { driver: 'dbt' },
+    });
+    const progressUpdates: Array<Array<{ connectionId: string; status: string }>> = [];
+    const executeTarget = vi.fn(async (target) => successResult(target.connectionId, target.driver, target.operation));
+
+    await runContextBuild(
+      project,
+      { projectDir: '/tmp/project', inputMode: 'disabled' },
+      io.io,
+      {
+        executeTarget,
+        now: () => 1000,
+        onSourceProgress: (sources) => {
+          progressUpdates.push(sources.map((s) => ({ connectionId: s.connectionId, status: s.status })));
+        },
+      },
+    );
+
+    expect(progressUpdates).toHaveLength(4);
+    expect(progressUpdates[0]).toEqual([
+      { connectionId: 'warehouse', status: 'running' },
+      { connectionId: 'dbt_main', status: 'queued' },
+    ]);
+    expect(progressUpdates[1]).toEqual([
+      { connectionId: 'warehouse', status: 'done' },
+      { connectionId: 'dbt_main', status: 'queued' },
+    ]);
+    expect(progressUpdates[2]).toEqual([
+      { connectionId: 'warehouse', status: 'done' },
+      { connectionId: 'dbt_main', status: 'running' },
+    ]);
+    expect(progressUpdates[3]).toEqual([
+      { connectionId: 'warehouse', status: 'done' },
+      { connectionId: 'dbt_main', status: 'done' },
+    ]);
+  });
+});
+
+describe('viewStateFromSourceProgress', () => {
+  it('partitions sources into primary and context groups', () => {
+    const state = viewStateFromSourceProgress(
+      [
+        { connectionId: 'warehouse', operation: 'scan', status: 'running', startedAtMs: 900 },
+        { connectionId: 'dbt-main', operation: 'source-ingest', status: 'queued' },
+      ],
+      1000,
+      500,
+    );
+
+    expect(state.primarySources).toHaveLength(1);
+    expect(state.primarySources[0].target.connectionId).toBe('warehouse');
+    expect(state.primarySources[0].status).toBe('running');
+    expect(state.primarySources[0].elapsedMs).toBe(100);
+    expect(state.contextSources).toHaveLength(1);
+    expect(state.contextSources[0].target.connectionId).toBe('dbt-main');
+    expect(state.contextSources[0].status).toBe('queued');
+    expect(state.totalElapsedMs).toBe(500);
+  });
+
+  it('uses stored elapsedMs for completed sources', () => {
+    const state = viewStateFromSourceProgress(
+      [{ connectionId: 'warehouse', operation: 'scan', status: 'done', elapsedMs: 72000, summaryText: '42 tables' }],
+      99999,
+    );
+
+    expect(state.primarySources[0].elapsedMs).toBe(72000);
+    expect(state.primarySources[0].summaryText).toBe('42 tables');
+  });
+
+  it('renders the same view format as the foreground build', () => {
+    const state = viewStateFromSourceProgress(
+      [
+        { connectionId: 'warehouse', operation: 'scan', status: 'done', elapsedMs: 72000, summaryText: '42 tables' },
+        { connectionId: 'dbt-main', operation: 'source-ingest', status: 'running', startedAtMs: 900 },
+      ],
+      1000,
+      500,
+    );
+
+    const output = renderContextBuildView(state, { styled: false });
+    expect(output).toContain('Building KTX context');
+    expect(output).toContain('Primary sources:');
+    expect(output).toContain('warehouse');
+    expect(output).toContain('42 tables');
+    expect(output).toContain('Context sources:');
+    expect(output).toContain('dbt-main');
+    expect(output).toContain('ingesting...');
   });
 });
