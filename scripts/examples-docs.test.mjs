@@ -76,6 +76,9 @@ describe('standalone example docs', () => {
     assert.match(readme, /manifest\.json/);
     assert.match(readme, /tables\/\*\.json/);
     assert.match(readme, /patterns-input\.json/);
+    assert.match(readme, /patterns-input\/part-\*\.json/);
+    assert.match(readme, /full audit input/);
+    assert.match(readme, /bounded pattern WorkUnit shards/);
     assert.match(readme, /workUnitCount: 0/);
     assert.match(compose, /postgres:14/);
     assert.match(compose, /shared_preload_libraries=pg_stat_statements/);
@@ -87,6 +90,10 @@ describe('standalone example docs', () => {
     assert.match(workload, /etl_user/);
     assert.match(smoke, /assert_unified_snapshot/);
     assert.match(smoke, /assert_stage_record "\$UNCHANGED_RECORD" unchanged zero/);
+    assert.match(smoke, /assertPatternShards/);
+    assert.match(smoke, /historic-sql-patterns-part-/);
+    assert.match(smoke, /patterns-input\/part-/);
+    assert.doesNotMatch(smoke, /unitKey === 'historic-sql-patterns'/);
     assert.match(smoke, /--historic-sql-min-executions 2/);
     assert.match(smoke, /KTX_RUNTIME_ROOT/);
     assert.match(smoke, /managedDaemon/);
