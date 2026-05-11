@@ -1,6 +1,6 @@
 packages:
   - "packages/*"
-  - "docs"
+  - "docs-site"
 
 overrides:
   "@types/node": ^24.3.0

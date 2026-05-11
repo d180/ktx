@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const codeExtensions = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.py']);
 const runtimeAssetPatterns = [/^packages\/[^/]+\/prompts\/.+\.md$/, /^packages\/[^/]+\/skills\/.+\.md$/];
-const identifierSkipPrefixes = ['docs/', 'examples/', 'python/ktx-sl/plans/', 'python/ktx-sl/openspec/'];
+const identifierSkipPrefixes = ['docs/', 'docs-site/', 'examples/', 'python/ktx-sl/plans/', 'python/ktx-sl/openspec/'];
 const identifierAllowPatterns = [
   /^packages\/cli\/src\/(?:index|managed-local-embeddings|managed-python-command|managed-python-daemon|managed-python-runtime|runtime)(?:\.test)?\.ts$/,
   /^scripts\/(?:build-public-npm-package|build-python-runtime-wheel|local-embeddings-runtime-smoke|package-artifacts|publish-public-npm-package|published-package-smoke|release-readiness)(?:\.test)?\.mjs$/,
