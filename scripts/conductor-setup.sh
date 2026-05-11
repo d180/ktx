@@ -82,7 +82,26 @@ resolve_uv_for_project() {
   printf '%s\n' "$workspace_uv"
 }
 
+link_agent_overlays() {
+  if [ -z "${KTX_AGENT_OVERLAYS_ROOT:-}" ] || [ ! -d "${KTX_AGENT_OVERLAYS_ROOT}/.agents" ]; then
+    return 0
+  fi
+
+  if [ -L .agents ]; then
+    return 0
+  fi
+
+  if [ -e .agents ]; then
+    echo "Skipping .agents symlink because .agents already exists and is not a symlink." >&2
+    return 0
+  fi
+
+  ln -s "${KTX_AGENT_OVERLAYS_ROOT}/.agents" .agents
+}
+
 echo "=== Conductor KTX workspace setup ==="
+
+link_agent_overlays
 
 if [ -n "${CONDUCTOR_ROOT_PATH:-}" ] && [ -f "$CONDUCTOR_ROOT_PATH/.env" ]; then
   ln -sf "$CONDUCTOR_ROOT_PATH/.env" .env
