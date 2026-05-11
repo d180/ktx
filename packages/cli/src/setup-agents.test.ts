@@ -86,7 +86,7 @@ describe('setup agents', () => {
     const skill = await readFile(join(tempDir, '.agents/skills/ktx/SKILL.md'), 'utf-8');
     expect(skill).toContain(`--project-dir ${tempDir}`);
     expect(skill).toContain('must not print secrets');
-    expect(skill).toContain('ktx agent sql execute');
+    expect(skill).toContain('agent sql execute');
     expect(await readKtxAgentInstallManifest(tempDir)).toMatchObject({
       version: 1,
       projectDir: tempDir,
@@ -94,6 +94,47 @@ describe('setup agents', () => {
     });
     expect(await readFile(join(tempDir, 'ktx.yaml'), 'utf-8')).toContain('agents');
     expect(io.stderr()).toBe('');
+  });
+
+  it('writes PATH-independent launcher commands for skills and MCP configs', async () => {
+    const io = makeIo();
+
+    await expect(
+      runKtxSetupAgentsStep(
+        {
+          projectDir: tempDir,
+          inputMode: 'disabled',
+          yes: true,
+          agents: true,
+          target: 'universal',
+          scope: 'project',
+          mode: 'both',
+          skipAgents: false,
+        },
+        io.io,
+      ),
+    ).resolves.toMatchObject({ status: 'ready' });
+
+    const skill = await readFile(join(tempDir, '.agents/skills/ktx/SKILL.md'), 'utf-8');
+    expect(skill).not.toContain('`ktx agent');
+    expect(skill).toContain('agent context --json');
+    expect(skill).toContain('agent sql execute');
+
+    const mcp = JSON.parse(await readFile(join(tempDir, '.agents/mcp/ktx.json'), 'utf-8')) as {
+      mcpServers?: { ktx?: { command?: string; args?: string[] } };
+    };
+    expect(mcp.mcpServers?.ktx?.command).toBe(process.execPath);
+    expect(mcp.mcpServers?.ktx?.args?.[0]).toMatch(/packages\/cli\/(src|dist)\/bin\.(ts|js)$/);
+    expect(mcp.mcpServers?.ktx?.args).toEqual([
+      expect.stringMatching(/packages\/cli\/(src|dist)\/bin\.(ts|js)$/),
+      '--project-dir',
+      tempDir,
+      'serve',
+      '--mcp',
+      'stdio',
+      '--semantic-compute',
+      '--execute-queries',
+    ]);
   });
 
   it('removes only manifest-listed files and JSON keys', async () => {

@@ -1,5 +1,6 @@
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { cancel, isCancel, multiselect, select } from '@clack/prompts';
 import { loadKtxProject, markKtxSetupStepComplete, serializeKtxProjectConfig } from '@ktx/context/project';
 import type { KtxCliIo } from './cli-runtime.js';
@@ -44,6 +45,11 @@ export interface KtxAgentInstallManifest {
 }
 
 type InstallEntry = KtxAgentInstallManifest['entries'][number];
+
+interface KtxCliLauncher {
+  command: string;
+  args: string[];
+}
 
 export function agentInstallManifestPath(projectDir: string): string {
   return join(resolve(projectDir), '.ktx/agents/install-manifest.json');
@@ -98,7 +104,26 @@ export function plannedKtxAgentFiles(input: {
   ].filter((entry): entry is InstallEntry => entry !== undefined);
 }
 
-function cliInstructionContent(input: { projectDir: string; target: KtxAgentTarget }): string {
+function ktxCliLauncher(): KtxCliLauncher {
+  return {
+    command: process.execPath,
+    args: [fileURLToPath(new URL('./bin.js', import.meta.url))],
+  };
+}
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_/:=.,@%+-]+$/.test(value)) {
+    return value;
+  }
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function ktxCommandLine(launcher: KtxCliLauncher, args: string[]): string {
+  return [launcher.command, ...launcher.args, ...args].map(shellQuote).join(' ');
+}
+
+function cliInstructionContent(input: { projectDir: string; launcher: KtxCliLauncher }): string {
+  const projectDirArgs = ['--json', '--project-dir', input.projectDir];
   return [
     '---',
     'name: ktx',
@@ -108,18 +133,43 @@ function cliInstructionContent(input: { projectDir: string; target: KtxAgentTarg
     '# KTX Local Context',
     '',
     `Use this project with \`--project-dir ${input.projectDir}\`.`,
+    'Commands are pinned to the local KTX CLI path that created this file, so agents do not need `ktx` in PATH.',
+    'If the CLI path no longer exists after moving this checkout or reinstalling KTX, rerun `ktx setup --agents`.',
     '',
     'Agents must not print secrets, credential references, environment variable values, or file contents from `.ktx/secrets`.',
     '',
     'Available commands:',
     '',
-    `- \`ktx agent context --json --project-dir ${input.projectDir}\``,
-    `- \`ktx agent sl list --json --project-dir ${input.projectDir}\``,
-    `- \`ktx agent sl read <sourceName> --json --project-dir ${input.projectDir}\``,
-    `- \`ktx agent sl query --json --project-dir ${input.projectDir} --connection-id <id> --query-file <path> --execute --max-rows 100\``,
-    `- \`ktx agent wiki search <query> --json --project-dir ${input.projectDir}\``,
-    `- \`ktx agent wiki read <pageId> --json --project-dir ${input.projectDir}\``,
-    `- \`ktx agent sql execute --json --project-dir ${input.projectDir} --connection-id <id> --sql-file <path> --max-rows 100\``,
+    `- \`${ktxCommandLine(input.launcher, ['agent', 'context', ...projectDirArgs])}\``,
+    `- \`${ktxCommandLine(input.launcher, ['agent', 'sl', 'list', ...projectDirArgs])}\``,
+    `- \`${ktxCommandLine(input.launcher, ['agent', 'sl', 'read', '<sourceName>', ...projectDirArgs])}\``,
+    `- \`${ktxCommandLine(input.launcher, [
+      'agent',
+      'sl',
+      'query',
+      ...projectDirArgs,
+      '--connection-id',
+      '<id>',
+      '--query-file',
+      '<path>',
+      '--execute',
+      '--max-rows',
+      '100',
+    ])}\``,
+    `- \`${ktxCommandLine(input.launcher, ['agent', 'wiki', 'search', '<query>', ...projectDirArgs])}\``,
+    `- \`${ktxCommandLine(input.launcher, ['agent', 'wiki', 'read', '<pageId>', ...projectDirArgs])}\``,
+    `- \`${ktxCommandLine(input.launcher, [
+      'agent',
+      'sql',
+      'execute',
+      ...projectDirArgs,
+      '--connection-id',
+      '<id>',
+      '--sql-file',
+      '<path>',
+      '--max-rows',
+      '100',
+    ])}\``,
     '',
     'SQL execution is read-only, requires an explicit row limit, and should use the smallest useful limit.',
     '',
@@ -137,10 +187,10 @@ function ruleInstructionContent(input: { projectDir: string }): string {
   ].join('\n');
 }
 
-function mcpConfig(projectDir: string): Record<string, unknown> {
+function mcpConfig(projectDir: string, launcher: KtxCliLauncher): Record<string, unknown> {
   return {
-    command: 'ktx',
-    args: ['--project-dir', projectDir, 'serve', '--mcp', 'stdio', '--semantic-compute', '--execute-queries'],
+    command: launcher.command,
+    args: [...launcher.args, '--project-dir', projectDir, 'serve', '--mcp', 'stdio', '--semantic-compute', '--execute-queries'],
     env: {},
   };
 }
@@ -325,16 +375,17 @@ async function installTarget(input: {
   mode: KtxAgentInstallMode;
 }): Promise<InstallEntry[]> {
   const entries = plannedKtxAgentFiles(input);
+  const launcher = ktxCliLauncher();
   for (const entry of entries) {
     if (entry.kind === 'file') {
       const content =
         entry.role === 'rule'
           ? ruleInstructionContent({ projectDir: input.projectDir })
-          : cliInstructionContent({ projectDir: input.projectDir, target: input.target });
+          : cliInstructionContent({ projectDir: input.projectDir, launcher });
       await mkdir(dirname(entry.path), { recursive: true });
       await writeFile(entry.path, content, 'utf-8');
     } else {
-      await writeJsonKey(entry.path, entry.jsonPath, mcpConfig(input.projectDir));
+      await writeJsonKey(entry.path, entry.jsonPath, mcpConfig(input.projectDir, launcher));
     }
   }
   return entries;
