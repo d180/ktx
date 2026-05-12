@@ -1076,17 +1076,17 @@ describe('runKtxIngest', () => {
       ),
     ).resolves.toBe(0);
 
-    const stderr = io.stderr();
-    expect(stderr).toContain('[5%] Fetching source files for warehouse/historic-sql');
-    expect(stderr).toContain('[15%] Fetched 3 source files from historic-sql');
-    expect(stderr).toContain('[45%] Planned 1 work unit');
-    expect(stderr).toContain('[80%] Processed 1/1 work units');
-    expect(stderr).toContain('[100%] Ingest completed');
-    expect(io.stdout()).toContain('Report: report-live-1');
-    expect(io.stdout()).not.toContain('[5%]');
+    const stdout = io.stdout();
+    expect(stdout).toContain('[5%] Fetching source files for warehouse/historic-sql');
+    expect(stdout).toContain('[15%] Fetched 3 source files from historic-sql');
+    expect(stdout).toContain('[45%] Planned 1 work unit');
+    expect(stdout).toContain('[80%] Processed 1/1 work units');
+    expect(stdout).toContain('[100%] Ingest completed');
+    expect(stdout).toContain('Report: report-live-1');
+    expect(io.stderr()).toBe('');
   });
 
-  it('writes plain TTY ingest progress to stderr and final report to stdout', async () => {
+  it('writes plain TTY ingest progress and final report to stdout', async () => {
     const projectDir = join(tempDir, 'project');
     await writeWarehouseConfig(projectDir);
     const sourceDir = join(tempDir, 'source');
@@ -1113,9 +1113,9 @@ describe('runKtxIngest', () => {
       ),
     ).resolves.toBe(0);
 
-    expect(io.stderr()).toContain('[5%] Fetching source files for warehouse/fake');
+    expect(io.stdout()).toContain('[5%] Fetching source files for warehouse/fake');
     expect(io.stdout()).toContain('Report: report-live-1');
-    expect(io.stdout()).not.toContain('[5%]');
+    expect(io.stderr()).toBe('');
   });
 
   it('prints plain WorkUnit step progress during long-running local ingest', async () => {
@@ -1202,12 +1202,106 @@ describe('runKtxIngest', () => {
       ),
     ).resolves.toBe(0);
 
-    const stderr = io.stderr();
-    expect(stderr).toContain('[45%] Planned 2 work units');
-    expect(stderr).toContain('[55%] Processing 1/2 work units: historic-sql-table-public-orders');
-    expect(stderr).toContain('[58%] Processing 1/2 work units: historic-sql-table-public-orders step 7/40');
-    expect(stderr).toContain('[68%] Processed 1/2 work units');
-    expect(io.stdout()).not.toContain('[45%]');
+    const stdout = io.stdout();
+    expect(stdout).toContain('[45%] Planned 2 work units');
+    expect(stdout).toContain('[55%] Processing 1/2 work units: historic-sql-table-public-orders');
+    expect(stdout).toContain(
+      '\r[58%] Processing work units: 0/2 complete, 1 active; latest historic-sql-table-public-orders step 7/40\u001b[K',
+    );
+    expect(stdout).toContain('[68%] Processed 1/2 work units');
+  });
+
+  it('renders concurrent WorkUnit step progress as transient aggregate status', async () => {
+    const projectDir = join(tempDir, 'historic-sql-concurrent-progress-project');
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(
+      join(projectDir, 'ktx.yaml'),
+      [
+        'project: historic-sql-concurrent-progress-project',
+        'connections:',
+        '  warehouse:',
+        '    driver: postgres',
+        '    url: env:WAREHOUSE_DATABASE_URL',
+        '    historicSql:',
+        '      enabled: true',
+        '      dialect: postgres',
+        '      minExecutions: 2',
+        'ingest:',
+        '  adapters:',
+        '    - historic-sql',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const createdAdapters: SourceAdapter[] = [
+      { source: 'historic-sql', skillNames: [], detect: async () => true, chunk: async () => ({ workUnits: [] }) },
+    ];
+    const workUnitKeys = [
+      'historic-sql-table-public-orders',
+      'historic-sql-table-public-customers',
+      'historic-sql-table-public-line-items',
+      'historic-sql-table-public-payments',
+      'historic-sql-table-public-products',
+      'historic-sql-table-public-suppliers',
+    ];
+    const runLocal = vi.fn(async (input: RunLocalIngestOptions) => {
+      input.memoryFlow?.update({
+        plannedWorkUnits: workUnitKeys.map((unitKey) => ({
+          unitKey,
+          rawFiles: [`tables/${unitKey}.json`],
+          peerFileCount: 0,
+          dependencyCount: 0,
+        })),
+      });
+      input.memoryFlow?.emit({
+        type: 'chunks_planned',
+        chunkCount: workUnitKeys.length,
+        workUnitCount: workUnitKeys.length,
+        evictionCount: 0,
+      });
+      for (const unitKey of workUnitKeys) {
+        input.memoryFlow?.emit({
+          type: 'work_unit_started',
+          unitKey,
+          skills: ['historic_sql_table_digest'],
+          stepBudget: 40,
+        });
+      }
+      for (const unitKey of workUnitKeys) {
+        input.memoryFlow?.emit({ type: 'work_unit_step', unitKey, stepIndex: 1, stepBudget: 40 });
+      }
+      input.memoryFlow?.finish('done');
+      return completedLocalBundleRun(input, input.jobId ?? 'historic-concurrent-progress-job');
+    });
+    const io = makeIo({ isTTY: true });
+
+    await expect(
+      runKtxIngest(
+        {
+          command: 'run',
+          projectDir,
+          connectionId: 'warehouse',
+          adapter: 'historic-sql',
+          outputMode: 'plain',
+        },
+        io.io,
+        {
+          env: interactiveEnv(),
+          createAdapters: vi.fn(() => createdAdapters as never),
+          runLocalIngest: runLocal,
+          jobIdFactory: () => 'historic-concurrent-progress-job',
+        },
+      ),
+    ).resolves.toBe(0);
+
+    const stdout = io.stdout();
+    expect(stdout).toContain(
+      '\r[56%] Processing work units: 0/6 complete, 6 active; latest historic-sql-table-public-suppliers step 1/40\u001b[K',
+    );
+    expect(stdout).not.toContain(
+      '\n[56%] Processing 6/6 work units: historic-sql-table-public-suppliers step 1/40\n',
+    );
+    expect(stdout).toContain('\n[100%] Ingest completed\n');
   });
 
   it('passes local Looker pull-config options and agent runner into scheduled ingest for Looker scheduled ingest', async () => {
