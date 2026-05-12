@@ -43,6 +43,7 @@ yarn-error.log*
 
 # Local project runtime state
 .ktx/
+**/.devtools/
 *.db
 *.sqlite
 *.sqlite3

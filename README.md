@@ -159,6 +159,29 @@ pnpm run link:dev
 ktx-dev --help
 ```
 
+### Debug LLM traces
+
+KTX can capture local AI SDK DevTools traces for LLM calls that run through the
+KTX provider. Enable it with an environment flag when running an LLM-backed
+command:
+
+```bash
+KTX_AI_DEVTOOLS_ENABLED=true ktx dev ingest run \
+  --connection-id warehouse \
+  --adapter metabase
+```
+
+Traces are written to `.devtools/generations.json` under the current working
+directory. To inspect them, run:
+
+```bash
+pnpm dlx @ai-sdk/devtools
+```
+
+Then open `http://localhost:4983`. These traces are local-development-only and
+store prompts, model outputs, tool arguments/results, and raw provider payloads
+in plain text. Do not enable this in production or for sensitive runs.
+
 The repository uses `pnpm` for TypeScript packages and `uv` for Python
 packages. See [Contributing](docs-site/content/docs/community/contributing.mdx)
 for full development setup, testing, and PR guidelines.
