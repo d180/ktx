@@ -190,7 +190,7 @@ describe('setup project step', () => {
     );
     expect(prompts.text).not.toHaveBeenCalled();
     expect(result.status === 'ready' ? result.project.config.project : '').toBe('ktx-project');
-    expect(testIo.stdout()).toContain(`KTX will create:\n  ${projectDir}`);
+    expect(testIo.stdout()).toContain(`│  KTX will create:\n│    ${projectDir}`);
     await expect(stat(join(projectDir, 'ktx.yaml'))).resolves.toBeDefined();
   });
 
@@ -209,7 +209,7 @@ describe('setup project step', () => {
     expect(result.projectDir).toBe(projectDir);
     expect(prompts.text).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: 'Project folder path\nPress Escape to go back.\n',
+        message: 'Project folder path\n│  Press Escape to go back.\n│',
         placeholder: './analytics-ktx, ~/analytics-ktx, or /Users/you/projects/analytics-ktx',
       }),
     );

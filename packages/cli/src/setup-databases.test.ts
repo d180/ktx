@@ -58,10 +58,10 @@ function connectionNamePrompt(label: string): string {
 function textInputPrompt(message: string): string {
   const normalized = message.replace(/\n+$/, '');
   if (!normalized.includes('\n')) {
-    return `${normalized}\nPress Escape to go back.\n`;
+    return `${normalized}\n│  Press Escape to go back.\n│`;
   }
   const [title, ...bodyLines] = normalized.split('\n');
-  return `${title}\n\n${bodyLines.join('\n')}\nPress Escape to go back.\n`;
+  return `${title}\n│\n│  ${bodyLines.join('\n│  ')}\n│  Press Escape to go back.\n│`;
 }
 
 const legacyHistoricSqlServiceAccountPatternsKey = ['serviceAccount', 'UserPatterns'].join('');
