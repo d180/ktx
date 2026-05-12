@@ -521,7 +521,8 @@ describe('verification snippets', () => {
       assert.doesNotMatch(source, new RegExp(["'demo'", "'--mode'", "'deterministic'"].join(', ')));
       assert.match(source, /'dev', 'doctor', 'setup', '--no-input'/);
       assert.match(source, /'--plain'/);
-      assert.match(source, /ktx setup demo seeded wrote unexpected stderr/);
+      assert.match(source, /function requireProjectStderr/);
+      assert.match(source, /requireProjectStderr\('ktx setup demo seeded', seeded, projectDir\)/);
       assert.match(source, /Object\.keys\(packageJson\.dependencies\)/);
       assert.match(source, /'@kaelio\/ktx'/);
     });
