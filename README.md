@@ -43,6 +43,7 @@ SQLite.
 Install the CLI and run the setup wizard:
 
 ```bash
+npm install @kaelio/ktx
 npm install -g @kaelio/ktx
 ktx setup
 ```
@@ -68,6 +69,40 @@ Primary sources configured: yes (postgres-warehouse)
 Context sources configured: yes (dbt-main)
 KTX context built: yes
 Agent integration ready: yes (claude-code:project)
+```
+
+Run the packaged demo without installing globally:
+
+```bash
+npx @kaelio/ktx setup demo --no-input
+npx @kaelio/ktx setup demo inspect
+```
+
+The default demo uses packaged sample data and prebuilt context. It does not
+require API keys, network access, or an LLM provider.
+
+Generate SQL from a semantic-layer source:
+
+```bash
+npx @kaelio/ktx sl query --project-dir "$PROJECT_DIR" \
+  --connection-id warehouse \
+  --measure accounts.account_count \
+  --dimension accounts.segment \
+  --format sql
+```
+
+List and test a configured warehouse connection:
+
+```bash
+ktx connection list --project-dir "$PROJECT_DIR"
+ktx connection test warehouse --project-dir "$PROJECT_DIR"
+```
+
+The connection test prints the configured driver and discovered table count:
+
+```text
+Driver: sqlite
+Tables: 1
 ```
 
 ## What's in a project
@@ -96,6 +131,47 @@ my-project/
 Semantic sources and knowledge pages are committed to git. The `.ktx/` directory
 holds ephemeral state and is git-ignored — delete it and KTX rebuilds on the
 next run.
+
+### Scan the demo warehouse
+
+Scan artifacts are written under
+`raw-sources/warehouse/live-database/<syncId>/` in the project directory.
+
+```bash
+SCAN_OUTPUT="$(ktx scan warehouse --project-dir "$PROJECT_DIR")"
+printf '%s\n' "$SCAN_OUTPUT"
+SCAN_RUN_ID="$(printf '%s\n' "$SCAN_OUTPUT" | awk '/^Run: / { print $2 }')"
+ktx scan status --project-dir "$PROJECT_DIR" "$SCAN_RUN_ID"
+ktx scan report --project-dir "$PROJECT_DIR" "$SCAN_RUN_ID"
+```
+
+For non-SQLite drivers, prefer credential references such as `--url env:NAME`
+or `--url file:PATH` over literal credential URLs.
+
+## Managed Python runtime
+
+KTX installs its Python runtime only when a Python-backed command needs it.
+The runtime lives outside the npm cache, is versioned by the installed CLI
+version, and is managed by `ktx runtime` commands.
+
+KTX requires `uv` on `PATH` to create the managed runtime. Install `uv` with
+your system package manager or the official installer before running Python-
+backed KTX commands. KTX doesn't download `uv` automatically; run
+`ktx runtime doctor` if runtime installation fails:
+
+```bash
+ktx runtime install --yes
+ktx runtime status
+ktx runtime doctor
+ktx runtime start
+ktx runtime stop
+ktx runtime prune --dry-run
+ktx runtime prune --yes
+```
+
+The release artifact manifest contains the public npm tarball and the bundled `kaelio-ktx`
+runtime wheel. The `python/ktx-sl` and `python/ktx-daemon` directories remain
+source packages for development, not public release artifacts.
 
 ## Serve agents
 
@@ -126,6 +202,11 @@ This exposes tools for connections, knowledge search, semantic-layer sources,
 validation, queries, ingestion, and replay. The `--semantic-compute` flag starts
 the managed Python runtime for query planning automatically.
 
+The standalone MCP server exposes `connection_list`, `knowledge_search`,
+`knowledge_read`, `knowledge_write`, `sl_list_sources`, `sl_read_source`,
+`sl_write_source`, `sl_validate`, `sl_query`, `ingest_trigger`,
+`ingest_status`, `ingest_report`, and `ingest_replay`.
+
 Supported agents: Claude Code, Codex, Cursor, OpenCode, and any agent that
 reads `.agents/` skills or MCP configuration.
 
@@ -136,7 +217,13 @@ reads `.agents/` skills or MCP configuration.
 | `packages/cli` | CLI entry point |
 | `packages/context` | Core context engine |
 | `packages/llm` | LLM and embedding providers |
-| `packages/connector-*` | Database connectors (Postgres, Snowflake, BigQuery, ClickHouse, MySQL, SQL Server, SQLite) |
+| `packages/connector-bigquery` | BigQuery scan connector |
+| `packages/connector-clickhouse` | ClickHouse scan connector |
+| `packages/connector-mysql` | MySQL scan connector |
+| `packages/connector-postgres` | Postgres scan connector |
+| `packages/connector-snowflake` | Snowflake scan connector |
+| `packages/connector-sqlite` | SQLite scan connector |
+| `packages/connector-sqlserver` | SQL Server scan connector |
 | `python/ktx-sl` | Semantic-layer query planning |
 | `python/ktx-daemon` | Portable compute service |
 

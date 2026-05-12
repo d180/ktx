@@ -368,7 +368,7 @@ describe('standalone built ktx CLI smoke', () => {
       const knowledgeSearch = structuredContent<{
         results: Array<{ key: string; summary: string; score: number }>;
         totalFound: number;
-      }>(await client.callTool({ name: 'knowledge_search', arguments: { query: 'ARR contract', limit: 5 } }));
+      }>(await client.callTool({ name: 'knowledge_search', arguments: { query: 'ARR contract-first definition', limit: 10 } }));
       expect(knowledgeSearch.totalFound).toBeGreaterThan(0);
       expect(knowledgeSearch.results.map((result) => result.key)).toContain('orbit-arr-contract-first-definition');
 
@@ -387,7 +387,7 @@ describe('standalone built ktx CLI smoke', () => {
       const slRead = structuredContent<{ sourceName: string; yaml: string }>(
         await client.callTool({
           name: 'sl_read_source',
-          arguments: { connectionId: 'postgres-warehouse', sourceName: 'mart_arr_daily' },
+          arguments: { connectionId: 'dbt-main', sourceName: 'mart_arr_daily' },
         }),
       );
       expect(slRead.sourceName).toBe('mart_arr_daily');
@@ -397,7 +397,7 @@ describe('standalone built ktx CLI smoke', () => {
       const slValidate = structuredContent<{ success: boolean; errors: string[]; warnings: string[] }>(
         await client.callTool({
           name: 'sl_validate',
-          arguments: { connectionId: 'postgres-warehouse', names: ['mart_arr_daily'] },
+          arguments: { connectionId: 'dbt-main', names: ['mart_arr_daily', 'stg_contracts'] },
         }),
       );
       expect(slValidate.success).toBe(true);

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { localFakeBundleReport, persistLocalBundleReport } from './ingest.test-utils.js';
 import { contextBuildCommands, writeKtxSetupContextState } from './setup-context.js';
 import { runDemoTour } from './setup-demo-tour.js';
 import { readKtxSetupStatus, runKtxSetup } from './setup.js';
@@ -309,6 +310,62 @@ describe('setup status', () => {
         statusCommand: `ktx setup context status setup-context-local-abc123 --project-dir ${tempDir}`,
       },
     });
+  });
+
+  it('reports Vertex LLM and context ready after a successful Metabase ingest report', async () => {
+    await writeFile(
+      join(tempDir, 'ktx.yaml'),
+      [
+        'project: revenue',
+        'setup:',
+        '  database_connection_ids:',
+        '    - warehouse',
+        '  completed_steps:',
+        '    - project',
+        '    - databases',
+        '    - sources',
+        'connections:',
+        '  warehouse:',
+        '    driver: postgres',
+        '    url: env:DATABASE_URL',
+        '  metabase:',
+        '    driver: metabase',
+        '    url: env:METABASE_URL',
+        '    api_key_ref: env:METABASE_API_KEY',
+        '    warehouse_connection_id: warehouse',
+        'llm:',
+        '  provider:',
+        '    backend: vertex',
+        '    vertex:',
+        '      project: kaelio-dev',
+        '      location: us-east5',
+        '  models:',
+        '    default: claude-sonnet-4-6',
+        'ingest:',
+        '  embeddings:',
+        '    backend: deterministic',
+        '    model: deterministic',
+        '    dimensions: 8',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    await persistLocalBundleReport(
+      tempDir,
+      localFakeBundleReport('metabase-job-1', {
+        connectionId: 'warehouse',
+        sourceKey: 'metabase',
+      }),
+    );
+
+    const status = await readKtxSetupStatus(tempDir);
+    const io = makeIo();
+    await expect(runKtxSetup({ command: 'status', projectDir: tempDir, json: false }, io.io)).resolves.toBe(0);
+
+    expect(status.llm).toMatchObject({ backend: 'vertex', ready: true, model: 'claude-sonnet-4-6' });
+    expect(status.context).toMatchObject({ ready: true, status: 'completed' });
+    expect(io.stdout()).toContain('LLM ready: yes (claude-sonnet-4-6)');
+    expect(io.stdout()).toContain('KTX context built: yes');
   });
 
   it('prints plain and JSON setup status', async () => {
