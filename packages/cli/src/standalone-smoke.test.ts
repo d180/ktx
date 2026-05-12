@@ -146,6 +146,10 @@ function parseJsonOutput<T>(stdout: string): T {
   return JSON.parse(stdout) as T;
 }
 
+function expectProjectStderr(result: CliResult, projectDir: string): void {
+  expect(result).toMatchObject({ code: 0, stderr: `Project: ${projectDir}\n` });
+}
+
 async function runSetupNewProject(projectDir: string): Promise<CliResult> {
   return await runBuiltCli([
     'setup',
@@ -178,7 +182,7 @@ describe('standalone built ktx CLI smoke', () => {
     const sourceDir = join(tempDir, 'source');
 
     const init = await runSetupNewProject(projectDir);
-    expect(init).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(init, projectDir);
     expect(init.stdout).toContain(`Project: ${projectDir}`);
 
     await writeWarehouseConfig(projectDir);
@@ -204,14 +208,15 @@ describe('standalone built ktx CLI smoke', () => {
   });
 
   it('runs the default pre-seeded demo without credentials', async () => {
+    const projectDir = join(tempDir, 'demo-project');
     const result = await runBuiltCli(
-      ['setup', 'demo', '--project-dir', join(tempDir, 'demo-project'), '--plain', '--no-input'],
+      ['setup', 'demo', '--project-dir', projectDir, '--plain', '--no-input'],
       {
         env: { ...process.env, ANTHROPIC_API_KEY: '' },
       },
     );
 
-    expect(result).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(result, projectDir);
     expect(result.stdout).toContain('Mode: seeded');
     expect(result.stdout).toContain('Source: packaged demo project');
     expect(result.stdout).toContain('LLM calls: none');
@@ -231,7 +236,7 @@ describe('standalone built ktx CLI smoke', () => {
     const seeded = await runBuiltCli(['setup', 'demo', '--project-dir', projectDir, '--plain', '--no-input'], {
       env: { ...process.env, ANTHROPIC_API_KEY: '' },
     });
-    expect(seeded).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(seeded, projectDir);
     expect(seeded.stdout).toContain('Mode: seeded');
 
     const wikiSearch = await runBuiltCli([
@@ -319,7 +324,7 @@ describe('standalone built ktx CLI smoke', () => {
     expect(seeded.stdout).toContain('Knowledge pages:');
 
     const inspect = await runBuiltCli(['setup', 'demo', 'inspect', '--project-dir', projectDir, '--no-input']);
-    expect(inspect).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(inspect, projectDir);
     expect(inspect.stdout).toContain('Mode: seeded');
     expect(inspect.stdout).toContain('Status: ready');
     expect(inspect.stdout).toContain('Warehouse: 8 tables, 11,234 rows');
@@ -348,7 +353,7 @@ describe('standalone built ktx CLI smoke', () => {
         env: { ...process.env, ANTHROPIC_API_KEY: '' },
       },
     );
-    expect(seeded).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(seeded, projectDir);
     expect(seeded.stdout).toContain('Mode: seeded');
 
     const client = new Client({ name: 'ktx-seeded-demo-smoke-client', version: '0.0.0' });
@@ -413,7 +418,7 @@ describe('standalone built ktx CLI smoke', () => {
     expect(result.stdout).toContain('KTX setup doctor');
     expect(result.stdout).toContain('Node 22+');
     expect(result.stdout).toContain('Workspace-local CLI');
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe(`Project: ${process.cwd()}\n`);
     expect([0, 1]).toContain(result.code);
   });
 
@@ -433,7 +438,7 @@ describe('standalone built ktx CLI smoke', () => {
     const projectDir = join(tempDir, 'reset-demo-project');
 
     const init = await runBuiltCli(['setup', 'demo', 'init', '--project-dir', projectDir, '--no-input']);
-    expect(init).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(init, projectDir);
 
     const withoutForce = await runBuiltCli(['setup', 'demo', 'reset', '--project-dir', projectDir, '--no-input']);
     expect(withoutForce.code).toBe(1);
@@ -450,7 +455,7 @@ describe('standalone built ktx CLI smoke', () => {
       '--force',
       '--no-input',
     ]);
-    expect(withForce).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(withForce, projectDir);
     expect(withForce.stdout).toContain(`Demo project reset: ${projectDir}`);
   });
 
@@ -458,7 +463,7 @@ describe('standalone built ktx CLI smoke', () => {
     const projectDir = join(tempDir, 'corrupt-demo-project');
 
     const init = await runBuiltCli(['setup', 'demo', 'init', '--project-dir', projectDir, '--no-input']);
-    expect(init).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(init, projectDir);
     await rm(join(projectDir, 'demo.db'), { force: true });
 
     const replay = await runBuiltCli(['setup', 'demo', '--mode', 'replay', '--project-dir', projectDir, '--no-input']);
@@ -471,14 +476,14 @@ describe('standalone built ktx CLI smoke', () => {
     const projectDir = join(tempDir, 'doctor-demo-project');
 
     const init = await runBuiltCli(['setup', 'demo', 'init', '--project-dir', projectDir, '--no-input']);
-    expect(init).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(init, projectDir);
 
     const result = await runBuiltCli(['setup', 'demo', 'doctor', '--project-dir', projectDir, '--no-input']);
     expect(result.stdout).toContain('KTX demo doctor');
     expect(result.stdout).toContain('Demo dataset');
     expect(result.stdout).toContain('Demo replay');
     expect(result.stdout).toContain('Demo LLM provider');
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe(`Project: ${projectDir}\n`);
     expect([0, 1]).toContain(result.code);
   });
 
@@ -504,20 +509,20 @@ describe('standalone built ktx CLI smoke', () => {
   it('runs structural and enriched scans through the built binary with manifest artifacts', async () => {
     const projectDir = join(tempDir, 'scan-project');
     const init = await runSetupNewProject(projectDir);
-    expect(init).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(init, projectDir);
 
     const dbPath = join(projectDir, 'warehouse.db');
     createSqliteWarehouse(dbPath);
     await writeSqliteScanConfig(projectDir, dbPath);
 
     const connectionTest = await runBuiltCli(['connection', 'test', 'warehouse', '--project-dir', projectDir]);
-    expect(connectionTest).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(connectionTest, projectDir);
     expect(connectionTest.stdout).toContain('Connection test passed: warehouse');
     expect(connectionTest.stdout).toContain('Driver: sqlite');
     expect(connectionTest.stdout).toContain('Tables: 2');
 
     const structural = await runBuiltCli(['dev', 'scan', 'warehouse', '--project-dir', projectDir]);
-    expect(structural).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(structural, projectDir);
     expect(structural.stdout).toContain('Status: done');
     expect(structural.stdout).toContain('Mode: structural');
     const structuralRunId = getRunId(structural.stdout);
@@ -560,7 +565,7 @@ describe('standalone built ktx CLI smoke', () => {
       '--mode',
       'enriched',
     ]);
-    expect(providerlessEnriched).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(providerlessEnriched, projectDir);
     expect(providerlessEnriched.stdout).toContain('Mode: enriched');
     expect(providerlessEnriched.stdout).toContain('Relationships');
     expect(providerlessEnriched.stdout).toContain('Accepted: 1');
@@ -614,7 +619,7 @@ describe('standalone built ktx CLI smoke', () => {
 
     await writeSqliteScanConfig(projectDir, dbPath, true);
     const enriched = await runBuiltCli(['dev', 'scan', 'warehouse', '--project-dir', projectDir, '--mode', 'enriched']);
-    expect(enriched).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(enriched, projectDir);
     expect(enriched.stdout).toContain('Mode: enriched');
     const enrichedRunId = getRunId(enriched.stdout);
 
@@ -706,7 +711,7 @@ describe('standalone built ktx CLI smoke', () => {
   it('adds a redacted Notion connection through the built binary', async () => {
     const projectDir = join(tempDir, 'notion-project');
     const init = await runSetupNewProject(projectDir);
-    expect(init).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(init, projectDir);
 
     const add = await runBuiltCli([
       'connection',
@@ -723,7 +728,7 @@ describe('standalone built ktx CLI smoke', () => {
       '5',
     ]);
 
-    expect(add).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(add, projectDir);
     expect(add.stdout).toContain('Connection: notion-main');
     expect(add.stdout).toContain('Driver: notion');
 
@@ -746,7 +751,7 @@ describe('standalone built ktx CLI smoke', () => {
     const projectDir = join(tempDir, 'project');
 
     const init = await runSetupNewProject(projectDir);
-    expect(init).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(init, projectDir);
     await writeWarehouseConfig(projectDir);
 
     const client = new Client({ name: 'ktx-smoke-client', version: '0.0.0' });
@@ -812,7 +817,7 @@ describe('standalone built ktx CLI smoke', () => {
   it('serves scan execution and artifact inspection tools over stdio from the built binary', async () => {
     const projectDir = join(tempDir, 'scan-mcp-project');
     const init = await runSetupNewProject(projectDir);
-    expect(init).toMatchObject({ code: 0, stderr: '' });
+    expectProjectStderr(init, projectDir);
 
     const dbPath = join(projectDir, 'warehouse.db');
     createSqliteWarehouse(dbPath);

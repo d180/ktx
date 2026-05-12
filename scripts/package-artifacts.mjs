@@ -520,6 +520,15 @@ function requireSuccess(label, result) {
   assert.equal(result.stderr, '', label + ' wrote unexpected stderr');
 }
 
+function requireProjectStderr(label, result, projectDir) {
+  assert.equal(
+    result.code,
+    0,
+    label + ' failed with code ' + result.code + '\\nstdout:\\n' + result.stdout + '\\nstderr:\\n' + result.stderr,
+  );
+  assert.equal(result.stderr, 'Project: ' + projectDir + '\\n', label + ' wrote unexpected stderr');
+}
+
 function requireSuccessWithStderr(label, result, stderrPattern) {
   assert.equal(
     result.code,
@@ -631,7 +640,7 @@ try {
     '--skip-sources',
     '--skip-agents',
   ]);
-  requireSuccess('ktx setup', init);
+  requireProjectStderr('ktx setup', init, projectDir);
   requireOutput('ktx setup', init, /Project: /);
 
   const emptyProjectDir = join(root, 'empty-project');
@@ -650,7 +659,7 @@ try {
     '--skip-sources',
     '--skip-agents',
   ]);
-  requireSuccess('ktx setup empty project', emptyInit);
+  requireProjectStderr('ktx setup empty project', emptyInit, emptyProjectDir);
   const emptySearch = await run('pnpm', [
     'exec',
     'ktx',
@@ -905,7 +914,7 @@ try {
     '--project-dir',
     projectDir,
   ]);
-  requireSuccess('ktx scan structural', structuralScan);
+  requireProjectStderr('ktx scan structural', structuralScan, projectDir);
   requireOutput('ktx scan structural', structuralScan, /Status: done/);
   requireOutput('ktx scan structural', structuralScan, /Mode: structural/);
   requireOutput('ktx scan structural', structuralScan, /Needs attention\\s+None/);
@@ -916,7 +925,7 @@ try {
     projectDir,
     structuralScanRunId,
   ]);
-  requireSuccess('ktx scan status', scanStatus);
+  requireProjectStderr('ktx scan status', scanStatus, projectDir);
   requireOutput('ktx scan status', scanStatus, new RegExp('Run: ' + structuralScanRunId));
   requireOutput('ktx scan status', scanStatus, /Status: done/);
   requireOutput('ktx scan status', scanStatus, /Mode: structural/);
@@ -943,7 +952,7 @@ try {
     '--mode',
     'enriched',
   ]);
-  requireSuccess('ktx scan enriched', enrichedScan);
+  requireProjectStderr('ktx scan enriched', enrichedScan, projectDir);
   requireOutput('ktx scan enriched', enrichedScan, /Status: done/);
   requireOutput('ktx scan enriched', enrichedScan, /Mode: enriched/);
   const enrichedScanRunId = getRunId(enrichedScan.stdout);
@@ -1037,6 +1046,15 @@ function requireStdout(label, result, pattern) {
   assert.match(result.stdout, pattern, label + ' stdout did not match ' + pattern);
 }
 
+function requireProjectStderr(label, result, projectDir) {
+  assert.equal(
+    result.code,
+    0,
+    label + ' failed with code ' + result.code + '\\nstdout:\\n' + result.stdout + '\\nstderr:\\n' + result.stderr,
+  );
+  assert.equal(result.stderr, 'Project: ' + projectDir + '\\n', label + ' wrote unexpected stderr');
+}
+
 const root = await mkdtemp(join(tmpdir(), 'ktx-packed-demo-smoke-'));
 try {
   const projectDir = join(root, 'demo-project');
@@ -1059,7 +1077,7 @@ try {
   requireStdout('ktx setup demo seeded', seeded, /ktx serve --mcp stdio/);
   assert.doesNotMatch(seeded.stdout, new RegExp(['--mode', 'deterministic'].join(' ')));
   assert.doesNotMatch(seeded.stdout, /KTX memory flow/);
-  assert.equal(seeded.stderr, '', 'ktx setup demo seeded wrote unexpected stderr');
+  requireProjectStderr('ktx setup demo seeded', seeded, projectDir);
 
   const demoWikiSearch = await run('pnpm', [
     'exec',
@@ -1108,7 +1126,7 @@ try {
   assert.ok([0, 1].includes(doctor.code), 'ktx dev doctor setup exit code must be 0 or 1');
   requireStdout('ktx dev doctor setup', doctor, /KTX setup doctor/);
   requireStdout('ktx dev doctor setup', doctor, /Node 22\\+/);
-  assert.equal(doctor.stderr, '', 'ktx dev doctor setup wrote unexpected stderr');
+  assert.equal(doctor.stderr, 'Project: ' + process.cwd() + '\\n', 'ktx dev doctor setup wrote unexpected stderr');
 } finally {
   await rm(root, { recursive: true, force: true });
 }
