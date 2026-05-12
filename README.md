@@ -1,5 +1,5 @@
 <h1 align="center">
-  <img src="assets/ktx-mascot.png" alt="" height="64" />&nbsp;&nbsp;KTX
+  <img src="assets/ktx-readme-header.png" alt="KTX" width="480" />
 </h1>
 
 <p align="center">
