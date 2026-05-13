@@ -204,8 +204,6 @@ async function promptForNewProjectDir(
   const defaultProjectDir = join(projectDir, DEFAULT_NEW_PROJECT_FOLDER_NAME);
 
   while (true) {
-    io.stdout.write(`│  Relative paths are resolved from:\n│    ${projectDir}\n`);
-    io.stdout.write(`│  Home paths are resolved from:\n│    ${homeDir}\n`);
     const destinationChoice = await prompts.select({
       message: 'Where should KTX create the project?',
       options: [
@@ -376,8 +374,6 @@ export async function runKtxSetupProjectStep(
     }
 
     if (choice === 'new-custom') {
-      io.stdout.write(`│  Relative paths are resolved from:\n│    ${projectDir}\n`);
-      io.stdout.write(`│  Home paths are resolved from:\n│    ${homeDir}\n`);
       const rawPath = await prompts.text({
         message: withTextInputNavigation('Project folder path'),
         placeholder: './analytics-ktx, ~/analytics-ktx, or /Users/you/projects/analytics-ktx',
