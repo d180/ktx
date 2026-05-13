@@ -366,17 +366,26 @@ async function defaultListSchemas(projectDir: string, connectionId: string): Pro
   return [];
 }
 
+function configuredSchemas(connection: KtxProjectConnectionConfig | undefined, driver: KtxSetupDatabaseDriver): string[] | undefined {
+  if (!connection) return undefined;
+  const spec = SCOPE_DISCOVERY_SPECS[driver];
+  if (!spec) return undefined;
+  const values = configuredScopeValues(connection, spec);
+  return values.length > 0 ? values : undefined;
+}
+
 async function defaultListTables(projectDir: string, connectionId: string): Promise<KtxTableListEntry[]> {
   const project = await loadKtxProject({ projectDir });
   const connection = project.config.connections[connectionId];
   const driver = normalizeDriver(connection?.driver);
+  const schemas = driver ? configuredSchemas(connection, driver) : undefined;
 
   if (driver === 'postgres') {
     const { KtxPostgresScanConnector, isKtxPostgresConnectionConfig } = await import('@ktx/connector-postgres');
     if (!isKtxPostgresConnectionConfig(connection)) return [];
     const connector = new KtxPostgresScanConnector({ connectionId, connection });
     try {
-      return await connector.listTables();
+      return await connector.listTables(schemas);
     } finally {
       await connector.cleanup();
     }
@@ -387,7 +396,7 @@ async function defaultListTables(projectDir: string, connectionId: string): Prom
     if (!isKtxMysqlConnectionConfig(connection)) return [];
     const connector = new KtxMysqlScanConnector({ connectionId, connection });
     try {
-      return await connector.listTables();
+      return await connector.listTables(schemas);
     } finally {
       await connector.cleanup();
     }
@@ -398,7 +407,7 @@ async function defaultListTables(projectDir: string, connectionId: string): Prom
     if (!isKtxSqlServerConnectionConfig(connection)) return [];
     const connector = new KtxSqlServerScanConnector({ connectionId, connection });
     try {
-      return await connector.listTables();
+      return await connector.listTables(schemas);
     } finally {
       await connector.cleanup();
     }
@@ -409,7 +418,7 @@ async function defaultListTables(projectDir: string, connectionId: string): Prom
     if (!isKtxBigQueryConnectionConfig(connection)) return [];
     const connector = new KtxBigQueryScanConnector({ connectionId, connection });
     try {
-      return await connector.listTables();
+      return await connector.listTables(schemas);
     } finally {
       await connector.cleanup();
     }
@@ -420,7 +429,7 @@ async function defaultListTables(projectDir: string, connectionId: string): Prom
     if (!isKtxSnowflakeConnectionConfig(connection)) return [];
     const connector = new KtxSnowflakeScanConnector({ connectionId, connection });
     try {
-      return await connector.listTables();
+      return await connector.listTables(schemas);
     } finally {
       await connector.cleanup();
     }
@@ -431,7 +440,7 @@ async function defaultListTables(projectDir: string, connectionId: string): Prom
     if (!isKtxClickHouseConnectionConfig(connection)) return [];
     const connector = new KtxClickHouseScanConnector({ connectionId, connection });
     try {
-      return await connector.listTables();
+      return await connector.listTables(schemas);
     } finally {
       await connector.cleanup();
     }
@@ -476,7 +485,6 @@ function configuredPrimarySourcesPrompt(connectionIds: string[]): {
     options: [
       { value: 'continue', label: 'Continue to knowledge sources' },
       { value: 'add', label: 'Add another primary source' },
-      { value: 'back', label: 'Back' },
     ],
   };
 }
@@ -1051,6 +1059,22 @@ async function writeScopeConfig(input: {
   });
 }
 
+async function clearScopeConfig(projectDir: string, connectionId: string): Promise<void> {
+  const project = await loadKtxProject({ projectDir });
+  const connection = project.config.connections[connectionId];
+  if (!connection) return;
+  const driver = normalizeDriver(connection.driver);
+  if (!driver) return;
+  const spec = SCOPE_DISCOVERY_SPECS[driver];
+  if (!spec) return;
+  const cleaned = Object.fromEntries(
+    Object.entries(connection).filter(
+      ([key]) => key !== spec.configArrayField && key !== spec.configSingleField && key !== 'enabled_tables',
+    ),
+  ) as KtxProjectConnectionConfig;
+  await writeConnectionConfig({ projectDir, connectionId, connection: cleaned });
+}
+
 async function maybeConfigureSchemaScope(input: {
   projectDir: string;
   connectionId: string;
@@ -1204,43 +1228,49 @@ async function maybeConfigureTableScope(input: {
   const schemaList = [...bySchema.keys()].sort();
   const schemaSummary = schemaList.map((s) => `${s} (${bySchema.get(s)!.length})`).join(', ');
 
-  const action = await input.prompts.select({
-    message: `Tables found in selected schemas\n` +
-      `${discovered.length} tables across ${schemaList.length} ${schemaList.length === 1 ? 'schema' : 'schemas'}: ${schemaSummary}`,
-    options: [
-      { value: 'all', label: 'Enable all tables' },
-      { value: 'customize', label: 'Customize which tables to enable' },
-    ],
-  });
+  let selected: string[] | null = null;
 
-  if (action === 'back') {
-    return false;
-  }
-
-  let selected: string[];
-
-  if (action === 'all') {
-    selected = allQualified;
-  } else {
-    const choices = await input.prompts.multiselect({
-      message: withMultiselectNavigation(
-        `Tables to enable for ${input.connectionId}\n` +
-          `Deselect any tables agents should not use.`,
-      ),
-      options: discovered.map((t) => {
-        const qualified = `${t.schema}.${t.name}`;
-        const suffix = t.kind === 'view' ? ' (view)' : '';
-        return { value: qualified, label: `${qualified}${suffix}` };
-      }),
-      initialValues: allQualified,
-      required: true,
+  while (selected === null) {
+    const action = await input.prompts.select({
+      message: `Tables found in selected schemas\n` +
+        `${discovered.length} tables across ${schemaList.length} ${schemaList.length === 1 ? 'schema' : 'schemas'}: ${schemaSummary}`,
+      options: [
+        { value: 'all', label: 'Enable all tables' },
+        { value: 'customize', label: 'Customize which tables to enable' },
+        { value: 'back', label: 'Back' },
+      ],
     });
 
-    if (choices.includes('back')) {
+    if (action === 'back') {
       return false;
     }
 
-    selected = choices.length > 0 ? choices : allQualified;
+    if (action === 'all') {
+      selected = allQualified;
+    } else {
+      const choices = await input.prompts.multiselect({
+        message: withMultiselectNavigation(
+          `Tables to enable for ${input.connectionId}\n` +
+            `Deselect any tables agents should not use.`,
+        ),
+        options: discovered.map((t) => {
+          const qualified = `${t.schema}.${t.name}`;
+          const suffix = t.kind === 'view' ? ' (view)' : '';
+          return { value: qualified, label: `${qualified}${suffix}` };
+        }),
+        initialValues: allQualified,
+        required: true,
+      });
+
+      if (choices.includes('back')) {
+        continue;
+      }
+      if (choices.length === 0) {
+        input.io.stdout.write('│  KTX needs at least one table enabled. Select a table or press Escape to go back.\n');
+        continue;
+      }
+      selected = choices;
+    }
   }
 
   await writeConnectionConfig({
@@ -1383,12 +1413,16 @@ async function validateAndScanConnection(input: {
   testLines.push(`Driver: ${driverDisplay}${Number.isFinite(tableCount) ? ` · Tables: ${tableCount}` : ''}`);
   writeSetupSection(input.io, `Testing ${input.connectionId}`, testLines);
 
-  if (!(await maybeConfigureSchemaScope(input))) {
-    return false;
-  }
+  while (true) {
+    if (!(await maybeConfigureSchemaScope(input))) {
+      return false;
+    }
 
-  if (!(await maybeConfigureTableScope(input))) {
-    return false;
+    if (await maybeConfigureTableScope(input)) {
+      break;
+    }
+
+    await clearScopeConfig(input.projectDir, input.connectionId);
   }
 
   await maybeRunHistoricSqlSetupProbe({
@@ -1559,12 +1593,9 @@ export async function runKtxSetupDatabasesStep(
   while (true) {
     if (showConfiguredPrimaryMenu) {
       const action = await prompts.select(configuredPrimarySourcesPrompt(selectedConnectionIds));
-      if (action === 'continue') {
+      if (action === 'continue' || action === 'back') {
         await markDatabasesComplete(args.projectDir, selectedConnectionIds);
         return { status: 'ready', projectDir: args.projectDir, connectionIds: selectedConnectionIds };
-      }
-      if (action === 'back') {
-        return { status: 'back', projectDir: args.projectDir };
       }
     }
     showConfiguredPrimaryMenu = false;

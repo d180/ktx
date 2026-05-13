@@ -411,6 +411,20 @@ export async function runLocalScan(options: RunLocalScanOptions): Promise<LocalS
       extractedAtFallback: report.createdAt,
     });
     const structuralSnapshot = enabledTables ? filterSnapshotTables(rawSnapshot, enabledTables) : rawSnapshot;
+    if (enabledTables && structuralSnapshot.tables.length < rawSnapshot.tables.length) {
+      const excluded = rawSnapshot.tables.length - structuralSnapshot.tables.length;
+      let remaining = excluded;
+      const ds = report.diffSummary;
+      const subFrom = (field: 'tablesAdded' | 'tablesUnchanged' | 'tablesModified') => {
+        const take = Math.min(remaining, ds[field]);
+        ds[field] -= take;
+        remaining -= take;
+      };
+      subFrom('tablesAdded');
+      subFrom('tablesUnchanged');
+      subFrom('tablesModified');
+      await options.progress?.update(0.6, scanChangeSummary(report.diffSummary));
+    }
     const manifestArtifacts = await writeLocalScanManifestShards({
       project: options.project,
       connectionId: options.connectionId,
