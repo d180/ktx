@@ -12,6 +12,11 @@ KTX has two npm release channels:
 - `rc` publishes prereleases such as `0.1.0-rc.2` to the npm `next` tag.
 - `stable` publishes normal releases such as `0.1.0` to the npm `latest` tag.
 
+Run rc releases from the source branch you want to publish. The workflow
+creates or updates the `next` prerelease branch from that source branch before
+running semantic-release, because semantic-release requires a dedicated
+prerelease branch in addition to the stable `main` branch.
+
 Run stable releases only from `main`. The workflow rejects stable releases from
 other branches.
 
@@ -19,10 +24,11 @@ other branches.
 
 Before you publish, confirm these requirements:
 
-- The repository has an Actions secret named `NPM_TOKEN`.
-- `NPM_TOKEN` is a granular npm token that can publish `@kaelio/ktx`.
-- The token can publish non-interactively if the npm account or package uses
-  two-factor authentication for writes.
+- npm Trusted Publishing is configured for `@kaelio/ktx`.
+- The trusted publisher points at the `Kaelio/ktx` repository and the
+  `.github/workflows/release.yml` workflow.
+- The workflow keeps `id-token: write` permission so npm can verify the
+  GitHub Actions run through OpenID Connect.
 - The repository has a baseline semantic-release tag for the latest published
   package version, such as `v0.1.0-rc.1`.
 
@@ -43,8 +49,9 @@ publishing to npm.
    if semantic-release doesn't find a releasable commit.
 7. Run the workflow.
 
-The dry-run uses the same semantic-release configuration as a live release. It
-doesn't publish to npm and doesn't commit release files.
+The dry-run uses the same semantic-release configuration as a live release. For
+rc releases, it can create or update the `next` branch. It doesn't publish to
+npm and doesn't commit release files.
 
 ## Publish an rc release
 
@@ -53,15 +60,16 @@ promoting to `latest`.
 
 1. Open **Actions** in GitHub.
 2. Select **KTX Release**.
-3. Select the branch to release from.
+3. Select the source branch to release from.
 4. Set **release_kind** to `rc`.
 5. Set **publish_live** to `true`.
 6. Optional: Set **force_release** to `true`.
 7. Run the workflow.
 
-The workflow publishes `@kaelio/ktx` with `--access public --tag next`, runs the
-published package smoke test, creates a GitHub release, and commits
-`CHANGELOG.md`, `package.json`, and `release-policy.json`.
+The workflow merges the selected source branch into `next`, publishes
+`@kaelio/ktx` with `--access public --tag next`, runs the published package
+smoke test, creates a GitHub release, and commits `CHANGELOG.md`,
+`package.json`, and `release-policy.json` on `next`.
 
 ## Publish a stable release
 
@@ -92,8 +100,11 @@ The artifact packaging and readiness scripts read `publicNpmPackageVersion`
 from `release-policy.json`, so manual version edits in build scripts aren't
 needed for rc releases.
 
-## Trusted Publishing follow-up
+## npm authentication
 
-This workflow uses `NPM_TOKEN` today. Move to npm Trusted Publishing after the
-final publish command path is verified for the package manager and workflow
-filename configured in npm package settings.
+The release workflow publishes through npm Trusted Publishing. It doesn't use
+an `NPM_TOKEN` secret, and the publish step doesn't set `NODE_AUTH_TOKEN`.
+
+If npm returns an authentication error, check the Trusted Publishing settings
+for the `@kaelio/ktx` package before adding token-based authentication back to
+the workflow.
