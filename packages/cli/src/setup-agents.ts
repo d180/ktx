@@ -1,7 +1,10 @@
 import { existsSync } from 'node:fs';
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
+import type { Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { styleText } from 'node:util';
+import { log, outro } from '@clack/prompts';
 import {
   loadKtxProject,
   markKtxSetupStateStepComplete,
@@ -9,7 +12,6 @@ import {
 } from '@ktx/context/project';
 import { strToU8, zipSync } from 'fflate';
 import type { KtxCliIo } from './cli-runtime.js';
-import { withMultiselectNavigation } from './prompt-navigation.js';
 import {
   createKtxSetupPromptAdapter,
   createKtxSetupUiAdapter,
@@ -51,7 +53,11 @@ export interface KtxAgentInstallManifest {
   installedAt: string;
   installs: Array<{ target: KtxAgentTarget; scope: KtxAgentScope; mode: KtxAgentInstallMode }>;
   entries: Array<
-    | { kind: 'file'; path: string; role?: 'skill' | 'rule' | 'analytics-skill' | 'claude-plugin' | 'launcher' }
+    | {
+        kind: 'file';
+        path: string;
+        role?: 'skill' | 'rule' | 'analytics-skill' | 'claude-desktop-skill-bundle' | 'launcher';
+      }
     | { kind: 'json-key'; path: string; jsonPath: string[] }
   >;
 }
@@ -75,6 +81,88 @@ const MCP_DAEMON_REQUIRED_NOTICE = 'mcp-daemon-required';
 interface KtxCliLauncher {
   command: string;
   args: string[];
+}
+
+function isWritableTtyOutput(output: KtxCliIo['stdout']): output is KtxCliIo['stdout'] & Writable {
+  return (
+    output.isTTY === true &&
+    typeof (output as { on?: unknown }).on === 'function' &&
+    typeof (output as { columns?: unknown }).columns !== 'undefined'
+  );
+}
+
+function writeSetupInfo(io: KtxCliIo, message: string): void {
+  if (isWritableTtyOutput(io.stdout)) {
+    log.info(message, { output: io.stdout });
+    return;
+  }
+  io.stdout.write(`${message}\n`);
+}
+
+function writeSetupStep(io: KtxCliIo, message: string): void {
+  if (isWritableTtyOutput(io.stdout)) {
+    log.step(message, { output: io.stdout });
+    return;
+  }
+  io.stdout.write(`\n${message}\n`);
+}
+
+function writeSetupOutro(io: KtxCliIo, message: string): void {
+  if (isWritableTtyOutput(io.stdout)) {
+    outro(message, { output: io.stdout });
+    return;
+  }
+  io.stdout.write(`\n${message}\n`);
+}
+
+const STEP_HEADING_RE = /^(\d+)\. (.+)$/;
+const ACTION_MARKER_RE = /^(RUN|PASTE|USE|OPEN):$/;
+
+export function createAgentNextActionsLineFormatter(
+  stdout: KtxCliIo['stdout'],
+): (line: string) => string {
+  const maybeHasColors = (stdout as { hasColors?: unknown }).hasColors;
+  const supportsColor = typeof maybeHasColors === 'function' && Boolean(maybeHasColors.call(stdout));
+  if (!supportsColor) return (line) => line;
+
+  const homeDir = process.env.HOME ? resolve(process.env.HOME) : '';
+  const styleOptions = { validateStream: false } as const;
+  const dim = (s: string) => styleText('dim', s, styleOptions);
+  const bold = (s: string) => styleText('bold', s, styleOptions);
+  const cyanBold = (s: string) => styleText(['cyan', 'bold'], s, styleOptions);
+  const dimCyan = (s: string) => styleText(['dim', 'cyan'], s, styleOptions);
+  const shortenPath = (path: string): string => {
+    if (!homeDir) return path;
+    if (path === homeDir) return '~';
+    if (path.startsWith(`${homeDir}/`)) return `~/${path.slice(homeDir.length + 1)}`;
+    return path;
+  };
+
+  return (rawLine: string): string => {
+    if (rawLine.length === 0 || rawLine.includes('[')) return rawLine;
+
+    const heading = rawLine.match(STEP_HEADING_RE);
+    if (heading) {
+      return `${cyanBold(heading[1])}  ${bold(heading[2])}`;
+    }
+
+    if (!rawLine.startsWith('  ')) return rawLine;
+    const body = rawLine.slice(2);
+
+    if (ACTION_MARKER_RE.test(body)) {
+      return `   ${dim(body)}`;
+    }
+
+    if (body.endsWith('.zip') && (body.startsWith('/') || body.startsWith('~'))) {
+      return `     ${dimCyan('•')}  ${shortenPath(body)}`;
+    }
+
+    if (body.includes(' > ')) {
+      return `   ${body.replaceAll(' > ', `  ${dim('›')}  `)}`;
+    }
+
+    return `   ${dim(body)}`;
+  };
 }
 
 async function readJsonObject(path: string): Promise<Record<string, unknown>> {
@@ -310,8 +398,12 @@ export function agentInstallManifestPath(projectDir: string): string {
   return join(resolve(projectDir), '.ktx/agents/install-manifest.json');
 }
 
-function claudeDesktopPluginPath(projectDir: string): string {
-  return join(resolve(projectDir), '.ktx/agents/claude/ktx-plugin.zip');
+function claudeDesktopAnalyticsSkillBundlePath(projectDir: string): string {
+  return join(resolve(projectDir), '.ktx/agents/claude/ktx-analytics.zip');
+}
+
+function claudeDesktopAdminSkillBundlePath(projectDir: string): string {
+  return join(resolve(projectDir), '.ktx/agents/claude/ktx.zip');
 }
 
 function claudeDesktopLauncherPath(projectDir: string): string {
@@ -357,7 +449,20 @@ export function plannedKtxAgentFiles(input: {
     if (input.target === 'claude-desktop') {
       return [
         { kind: 'file', path: claudeDesktopLauncherPath(input.projectDir), role: 'launcher' as const },
-        { kind: 'file', path: claudeDesktopPluginPath(input.projectDir), role: 'claude-plugin' as const },
+        {
+          kind: 'file',
+          path: claudeDesktopAnalyticsSkillBundlePath(input.projectDir),
+          role: 'claude-desktop-skill-bundle' as const,
+        },
+        ...(withAdminCli
+          ? [
+              {
+                kind: 'file' as const,
+                path: claudeDesktopAdminSkillBundlePath(input.projectDir),
+                role: 'claude-desktop-skill-bundle' as const,
+              },
+            ]
+          : []),
       ];
     }
     throw new Error(`Global ${input.target} installation is not supported; omit --global.`);
@@ -487,43 +592,7 @@ function cliInstructionContent(input: { projectDir: string; launcher: KtxCliLaun
   ].join('\n');
 }
 
-function claudePluginJsonContent(): string {
-  return `${JSON.stringify(
-    {
-      name: 'ktx',
-      version: '0.0.0-local',
-      description: 'KTX analytics workflow guidance and local MCP tools.',
-    },
-    null,
-    2,
-  )}\n`;
-}
-
-function claudePluginVersionContent(): string {
-  return `${JSON.stringify({ version: '0.0.0-local' }, null, 2)}\n`;
-}
-
-function claudePluginSetupContent(input: { projectDir: string; withAdminCli: boolean }): string {
-  return [
-    '# KTX Claude Plugin',
-    '',
-    'This package is generated by KTX setup. Claude Desktop loads KTX through the registered `claude_desktop_config.json` entry after restart; no manual plugin install step is required.',
-    '',
-    `KTX project: \`${input.projectDir}\``,
-    '',
-    'Included:',
-    '',
-    '- `ktx-analytics` skill for the MCP analytics workflow',
-    ...(input.withAdminCli ? ['- `ktx` admin CLI skill for KTX maintenance commands'] : []),
-    '',
-    'The KTX MCP server is registered separately in `claude_desktop_config.json` by `ktx setup` and runs as a local stdio child of Claude Desktop — no daemon to start.',
-    '',
-    'If this checkout or project directory moves, rerun `ktx setup --agents` and restart Claude Desktop.',
-    '',
-  ].join('\n');
-}
-
-function claudePluginLauncherContent(input: { launcher: KtxCliLauncher }): string {
+function claudeDesktopLauncherContent(input: { launcher: KtxCliLauncher }): string {
   const binPath = input.launcher.args[0];
   if (!binPath) {
     throw new Error('Expected KTX CLI launcher to include a bin path.');
@@ -572,32 +641,37 @@ function claudePluginLauncherContent(input: { launcher: KtxCliLauncher }): strin
     '  run_with_node "$(command -v node)" "$@"',
     'fi',
     '',
-    'echo "KTX plugin could not find Node.js. Set KTX_NODE to a Node executable and reinstall the plugin." >&2',
+    'echo "KTX Claude Desktop launcher could not find Node.js. Set KTX_NODE to a Node executable and rerun ktx setup --agents." >&2',
     'exit 127',
     '',
   ].join('\n');
 }
 
-async function writeClaudeDesktopPlugin(input: {
+async function writeClaudeDesktopSkillBundle(input: {
   projectDir: string;
   path: string;
-  mode: KtxAgentInstallMode;
+  skillName: 'ktx-analytics' | 'ktx';
   launcher: KtxCliLauncher;
 }): Promise<void> {
-  const withAdminCli = input.mode === 'mcp-cli';
+  const content =
+    input.skillName === 'ktx-analytics'
+      ? await readAnalyticsSkillContent()
+      : cliInstructionContent({ projectDir: input.projectDir, launcher: input.launcher });
   const files: Record<string, Uint8Array> = {
-    '.claude-plugin/plugin.json': strToU8(claudePluginJsonContent()),
-    'version.json': strToU8(claudePluginVersionContent()),
-    'skills/ktx-analytics/SKILL.md': strToU8(await readAnalyticsSkillContent()),
-    'SETUP.md': strToU8(claudePluginSetupContent({ projectDir: input.projectDir, withAdminCli })),
+    [`${input.skillName}/SKILL.md`]: strToU8(content),
   };
-  if (withAdminCli) {
-    files['skills/ktx/SKILL.md'] = strToU8(
-      cliInstructionContent({ projectDir: input.projectDir, launcher: input.launcher }),
-    );
-  }
   await mkdir(dirname(input.path), { recursive: true });
   await writeFile(input.path, Buffer.from(zipSync(files)));
+}
+
+function claudeDesktopSkillNameForBundle(path: string): 'ktx-analytics' | 'ktx' {
+  if (path.endsWith('/ktx-analytics.zip')) {
+    return 'ktx-analytics';
+  }
+  if (path.endsWith('/ktx.zip')) {
+    return 'ktx';
+  }
+  throw new Error(`Unsupported Claude Desktop skill bundle path: ${path}`);
 }
 
 async function writeClaudeDesktopLauncher(input: {
@@ -605,7 +679,7 @@ async function writeClaudeDesktopLauncher(input: {
   launcher: KtxCliLauncher;
 }): Promise<void> {
   await mkdir(dirname(input.path), { recursive: true });
-  await writeFile(input.path, claudePluginLauncherContent({ launcher: input.launcher }), 'utf-8');
+  await writeFile(input.path, claudeDesktopLauncherContent({ launcher: input.launcher }), 'utf-8');
   await chmod(input.path, 0o755);
 }
 
@@ -764,7 +838,6 @@ function guidanceInstallLine(target: KtxAgentTarget): string {
   if (target === 'cursor') return 'Cursor rules installed';
   if (target === 'opencode') return 'OpenCode commands installed';
   if (target === 'universal') return '.agents guidance installed';
-  if (target === 'claude-desktop') return 'Claude Desktop skills bundled';
   return 'Agent guidance installed';
 }
 
@@ -780,12 +853,27 @@ function hasAdminCliEntries(entries: InstallEntry[]): boolean {
   );
 }
 
-export function formatInstallSummary(
+export interface InstallSummaryEntry {
+  title: string;
+  lines: string[];
+}
+
+function formatInlinePath(path: string): string {
+  const home = process.env.HOME;
+  if (!home) return path;
+  const resolvedHome = resolve(home);
+  if (path === resolvedHome) return '~';
+  if (path.startsWith(`${resolvedHome}/`)) {
+    return `~/${relative(resolvedHome, path)}`;
+  }
+  return path;
+}
+
+export function formatInstallSummaryLines(
   installs: Array<{ target: KtxAgentTarget; scope: KtxAgentScope; mode: KtxAgentInstallMode }>,
   entries: InstallEntry[],
   projectDir: string,
-): string {
-  const resolvedProjectDir = resolve(projectDir);
+): InstallSummaryEntry[] {
   const entriesByTarget = new Map<KtxAgentTarget, InstallEntry[]>();
   for (const install of installs) {
     const plannedFilePaths = new Set(
@@ -807,41 +895,71 @@ export function formatInstallSummary(
     );
   }
 
-  const lines: string[] = ['KTX project', `  ${resolvedProjectDir}`, '', 'Installed agents'];
-  for (const install of installs) {
+  return installs.map((install) => {
     const targetEntries = entriesByTarget.get(install.target) ?? [];
     const mcpEntry = mcpEntriesByTarget
       .get(install.target)
       ?.find((entry): entry is Extract<InstallEntry, { kind: 'json-key' }> => entry.kind === 'json-key');
-    lines.push('', `  ${targetDisplayName(install.target)}`);
+    const lines: string[] = [];
+
     if (mcpEntry) {
-      lines.push(`    ${scopeDisplayName(install.scope)}`);
-      lines.push(`      ${mcpEntry.path}`);
+      lines.push(formatInlinePath(mcpEntry.path));
     } else if (install.target !== 'claude-desktop') {
-      lines.push('    MCP config');
-      lines.push(`      ${manualMcpConfigInstruction(install.target, install.scope)}`);
+      lines.push(manualMcpConfigInstruction(install.target, install.scope));
     }
+
     if (targetUsesHttpMcpDaemon(install.target)) {
-      lines.push('    Requires MCP to be started');
+      lines.push('Requires MCP to be started.');
     }
+
     const hasAnalytics = hasEntryRole(targetEntries, 'analytics-skill');
     const hasAdmin = hasAdminCliEntries(targetEntries);
-    const hasPlugin = hasEntryRole(targetEntries, 'claude-plugin');
+    const claudeDesktopSkillBundles = targetEntries.filter(
+      (entry): entry is Extract<InstallEntry, { kind: 'file' }> =>
+        entry.kind === 'file' && entry.role === 'claude-desktop-skill-bundle',
+    );
+
     if (install.target === 'claude-code') {
       if (hasAnalytics) {
-        lines.push('    Analytics skill installed');
+        lines.push('Analytics skill installed.');
       }
       if (hasAdmin) {
-        lines.push('    Admin CLI skill installed');
+        lines.push('Admin CLI skill installed.');
       }
-    } else if (hasAnalytics || hasAdmin || hasPlugin) {
-      lines.push(`    ${guidanceInstallLine(install.target)}`);
+    } else if (install.target === 'claude-desktop') {
+      if (claudeDesktopSkillBundles.length > 0) {
+        lines.push('Skill bundles:');
+        for (const bundle of claudeDesktopSkillBundles) {
+          lines.push(`  ${bundle.path}`);
+        }
+      }
+    } else if (hasAnalytics || hasAdmin) {
+      lines.push(`${guidanceInstallLine(install.target)}.`);
     }
+
     if (hasEntryRole(targetEntries, 'launcher')) {
-      lines.push('    Starts KTX over stdio from Claude Desktop');
+      lines.push('Starts KTX over stdio from Claude Desktop.');
     }
-  }
-  return lines.join('\n');
+
+    return {
+      title: `${targetDisplayName(install.target)} · ${scopeDisplayName(install.scope)}`,
+      lines,
+    };
+  });
+}
+
+function claudeDesktopSkillBundlePathsForInstalls(
+  projectDir: string,
+  installs: Array<{ target: KtxAgentTarget; scope: KtxAgentScope; mode: KtxAgentInstallMode }>,
+): string[] {
+  return installs
+    .filter((install) => install.target === 'claude-desktop')
+    .flatMap((install) => plannedKtxAgentFiles({ projectDir, ...install }))
+    .filter(
+      (entry): entry is Extract<InstallEntry, { kind: 'file' }> =>
+        entry.kind === 'file' && entry.role === 'claude-desktop-skill-bundle',
+    )
+    .map((entry) => entry.path);
 }
 
 function humanList(values: string[]): string {
@@ -981,9 +1099,22 @@ function formatAgentNextActions(input: {
 
   if (input.installs.some((install) => install.target === 'claude-desktop')) {
     lines.push(`${step}. Restart Claude Desktop`);
-    lines.push('  Claude Desktop loads KTX after restart.');
+    lines.push('  Claude Desktop loads KTX MCP after restart.');
     pushBlankLine(lines);
     step += 1;
+
+    const skillBundlePaths = claudeDesktopSkillBundlePathsForInstalls(projectDir, input.installs);
+    if (skillBundlePaths.length > 0) {
+      lines.push(`${step}. Upload Claude Desktop skills`);
+      lines.push('  Open Claude Desktop: Customize > Skills > + > Create skill > Upload a skill.');
+      lines.push(skillBundlePaths.length === 1 ? '  Upload this file:' : '  Upload each file separately:');
+      for (const path of skillBundlePaths) {
+        lines.push(`  ${path}`);
+      }
+      lines.push('  Toggle the uploaded KTX skills on.');
+      pushBlankLine(lines);
+      step += 1;
+    }
   }
 
   if (lines.length === 0) {
@@ -1008,11 +1139,11 @@ async function installTarget(input: {
       await writeClaudeDesktopLauncher({ path: entry.path, launcher });
       continue;
     }
-    if (entry.role === 'claude-plugin') {
-      await writeClaudeDesktopPlugin({
+    if (entry.role === 'claude-desktop-skill-bundle') {
+      await writeClaudeDesktopSkillBundle({
         projectDir: input.projectDir,
         path: entry.path,
-        mode: input.mode,
+        skillName: claudeDesktopSkillNameForBundle(entry.path),
         launcher,
       });
       continue;
@@ -1049,6 +1180,9 @@ export async function runKtxSetupAgentsStep(
   }
 
   const prompts = deps.prompts ?? createPromptAdapter();
+  if (args.inputMode === 'auto' && args.target === undefined) {
+    writeSetupInfo(io, 'Space to select, Enter to confirm, Esc to go back.');
+  }
   const mode =
     args.inputMode === 'disabled'
       ? args.mode
@@ -1075,7 +1209,7 @@ export async function runKtxSetupAgentsStep(
       : args.inputMode === 'disabled'
         ? []
         : ((await prompts.multiselect({
-            message: withMultiselectNavigation('Which agent targets should KTX install?'),
+            message: 'Which agent targets should KTX install?',
             options: [
               { value: 'claude-code', label: 'Claude Code' },
               { value: 'claude-desktop', label: 'Claude Desktop' },
@@ -1139,11 +1273,12 @@ export async function runKtxSetupAgentsStep(
     );
     await markAgentsComplete(args.projectDir);
     const setupUi = createKtxSetupUiAdapter();
-    setupUi.note(
-      formatInstallSummary(installs, entries, args.projectDir),
-      'Agent integration complete',
-      io,
-    );
+    for (const summary of formatInstallSummaryLines(installs, entries, args.projectDir)) {
+      writeSetupStep(
+        io,
+        summary.lines.length > 0 ? `${summary.title}\n${summary.lines.join('\n')}` : summary.title,
+      );
+    }
     const nextActions = formatAgentNextActions({
       projectDir: args.projectDir,
       installs,
@@ -1151,7 +1286,10 @@ export async function runKtxSetupAgentsStep(
       snippets,
     });
     if (args.showNextActions !== false) {
-      setupUi.note(nextActions, 'Required before using agents', io, { format: (line) => line });
+      setupUi.note(nextActions, 'Required before using agents', io, {
+        format: createAgentNextActionsLineFormatter(io.stdout),
+      });
+      writeSetupOutro(io, 'All set.');
     }
     return { status: 'ready', projectDir: args.projectDir, installs, nextActions };
   } catch (error) {
