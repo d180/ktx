@@ -12,7 +12,6 @@ import {
   publicKtxTarballName,
   validateEmbeddingResponse,
 } from './local-embeddings-runtime-smoke.mjs';
-
 const PUBLIC_TARBALL_NAME = `kaelio-ktx-${PUBLIC_NPM_PACKAGE_VERSION}.tgz`;
 const OTHER_PUBLIC_TARBALL_NAME = 'kaelio-ktx-9.9.9.tgz';
 
