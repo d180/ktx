@@ -39,7 +39,7 @@ import {
 } from './setup-prompts.js';
 
 const HISTORIC_SQL_WORK_UNIT_MAX_CONCURRENCY = 6;
-const KTX_QUICKSTART_URL = 'https://docs.kaelio.com/ktx/docs/getting-started/quickstart';
+const KTX_DEMO_START_URL = 'https://www.kaelio.com/start';
 const execFileAsync = promisify(execFileCallback);
 
 export type KtxSetupDatabaseDriver =
@@ -1747,7 +1747,7 @@ async function chooseDrivers(
   }
   const initialValues = unique(options?.initialDrivers ?? []);
   createKtxSetupUiAdapter().note(
-    `Get demo credentials from the Quickstart: ${KTX_QUICKSTART_URL}`,
+    `Get demo credentials: ${KTX_DEMO_START_URL}`,
     '🎁 Need a warehouse to play with?',
     io,
   );
