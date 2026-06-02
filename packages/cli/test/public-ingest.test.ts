@@ -477,17 +477,51 @@ describe('runKtxPublicIngest', () => {
       all: false,
     }).targets;
 
+    const runScan = vi.fn(async () => 0);
     const result = await executePublicIngestTarget(
       target,
       { command: 'run', projectDir: '/tmp/project', targetConnectionId: 'warehouse', all: false, json: false, inputMode: 'disabled' },
       io.io,
-      { runScan: vi.fn(async () => 0) },
+      { runScan },
       project,
     );
 
     expect(result.steps.some((step) => step.status === 'failed')).toBe(false);
     expect(occurrences(io.stderr(), '"event":"ingest_completed"')).toBe(1);
     expect(io.stderr()).toContain('"outcome":"ok"');
+    // A database-ingest target must run a scan — runKtxScan is what emits
+    // scan_completed, so this guards against the 0.7.0-style regression where a
+    // path stopped triggering the scan and the event silently went to zero.
+    expect(runScan).toHaveBeenCalledTimes(1);
+  });
+
+  it('still emits ingest_completed when a target fails preflight (early-return branch)', async () => {
+    // The chokepoint must emit on every internal branch, including the early
+    // preflight-failure return — otherwise failed-setup installs vanish.
+    vi.stubEnv('KTX_TELEMETRY_DEBUG', '1');
+    vi.stubEnv('CI', '');
+    const io = makeIo({ isTTY: true });
+    // projectWithConnections leaves enrichment unconfigured → preflight failure.
+    const project = projectWithConnections({ warehouse: { driver: 'postgres' } });
+    const [target] = buildPublicIngestPlan(project, {
+      projectDir: '/tmp/project',
+      targetConnectionId: 'warehouse',
+      all: false,
+    }).targets;
+    expect(target.preflightFailure).toBeTruthy();
+
+    const runScan = vi.fn(async () => 0);
+    await executePublicIngestTarget(
+      target,
+      { command: 'run', projectDir: '/tmp/project', targetConnectionId: 'warehouse', all: false, json: false, inputMode: 'disabled' },
+      io.io,
+      { runScan },
+      project,
+    );
+
+    expect(occurrences(io.stderr(), '"event":"ingest_completed"')).toBe(1);
+    expect(io.stderr()).toContain('"outcome":"error"');
+    expect(runScan).not.toHaveBeenCalled();
   });
 
   it('emits one ingest_completed per target and never double-emits across a multi-target run', async () => {

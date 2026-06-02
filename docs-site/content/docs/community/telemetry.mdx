@@ -6,11 +6,10 @@ description: Understand what usage telemetry ktx collects and how to opt out.
 **ktx** collects aggregated usage telemetry so maintainers can see
 which commands work, where setup fails, and which parts of the data-agent
 workflow need improvement. Telemetry is opt-out: it turns on the first time you
-run **ktx** in an interactive terminal, which prints a one-time notice. From
-then on the same install also reports background activity that has no terminal
-of its own, such as the local MCP server your agent calls. It stays disabled in
-CI, whenever an opt-out is set, and until that first interactive run has shown
-the notice.
+run **ktx** in any way — an interactive command, a script, or an
+agent-launched MCP server — and prints a one-time notice (to the terminal when
+there is one, otherwise to standard error). It stays disabled in CI and whenever
+an opt-out is set.
 
 ## Opt out
 
