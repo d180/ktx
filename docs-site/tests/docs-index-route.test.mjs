@@ -145,6 +145,53 @@ test("/ktx/docs redirects to the docs introduction", async () => {
   );
 });
 
+test("retired AI Resources URLs redirect to the page under Community", async () => {
+  // The former top-level URL.
+  const bare = await fetch(
+    `${docsSiteUrl}${docsBasePath}/docs/ai-resources`,
+    { redirect: "manual" },
+  );
+
+  assert.equal(bare.status, 308);
+  assert.equal(
+    bare.headers.get("location"),
+    `${docsBasePath}/docs/community/ai-resources`,
+  );
+
+  // A retired per-page slug.
+  const slug = await fetch(
+    `${docsSiteUrl}${docsBasePath}/docs/ai-resources/agent-quickstart`,
+    { redirect: "manual" },
+  );
+
+  assert.equal(slug.status, 308);
+  assert.equal(
+    slug.headers.get("location"),
+    `${docsBasePath}/docs/community/ai-resources`,
+  );
+
+  // A retired per-page Markdown URL must stay Markdown: it has to redirect to
+  // the new .md route, not fall through to the HTML page.
+  const markdown = await fetch(
+    `${docsSiteUrl}${docsBasePath}/docs/ai-resources/agent-quickstart.md`,
+    { redirect: "manual" },
+  );
+
+  assert.equal(markdown.status, 308);
+  assert.equal(
+    markdown.headers.get("location"),
+    `${docsBasePath}/docs/community/ai-resources.md`,
+  );
+
+  // Following that redirect end to end must land on Markdown, not HTML.
+  const followed = await fetch(
+    `${docsSiteUrl}${docsBasePath}/docs/ai-resources/agent-quickstart.md`,
+  );
+
+  assert.equal(followed.status, 200);
+  assert.match(followed.headers.get("content-type") ?? "", /text\/markdown/);
+});
+
 test("/ redirects into the /ktx docs site", async () => {
   const response = await fetch(`${docsSiteUrl}/`, {
     redirect: "manual",
