@@ -301,6 +301,11 @@ export interface KtxConfigIssue {
   path: string;
   message: string;
   fix?: string;
+  /**
+   * 'error' blocks the project (bad value on a recognized field); 'warning' is
+   * a condition the loader recovers from on its own (an ignored unknown key).
+   */
+  severity: 'error' | 'warning';
 }
 
 export interface KtxConfigValidation {
@@ -325,24 +330,61 @@ function valueAtPath(root: unknown, path: ReadonlyArray<PropertyKey>): unknown {
   return cursor;
 }
 
-function formatIssue(issue: z.core.$ZodIssue, input: unknown): KtxConfigIssue[] {
-  const basePath = dottedPath(issue.path);
+interface UnknownKeyLocation {
+  containerPath: ReadonlyArray<PropertyKey>;
+  key: string;
+}
 
+/**
+ * Zod reports unknown keys in two shapes: strict objects emit
+ * `unrecognized_keys` (path → container, `keys` → offenders), enum-keyed
+ * records (`llm.models`) emit one `invalid_key` per offender (path ends with
+ * the key). Normalize both so the warning report and the strip always agree.
+ */
+function unknownKeyLocations(issue: z.core.$ZodIssue): UnknownKeyLocation[] {
   if (issue.code === 'unrecognized_keys') {
-    const keys = (issue as { keys?: readonly string[] }).keys ?? [];
-    return keys.map((key) => {
-      const fullPath = basePath.length > 0 ? `${basePath}.${key}` : key;
-      return { path: fullPath, message: `Unsupported ${fullPath}: unknown field` };
+    return issue.keys.map((key) => ({ containerPath: issue.path, key }));
+  }
+  if (issue.code === 'invalid_key' && issue.path.length > 0) {
+    return [
+      {
+        containerPath: issue.path.slice(0, -1),
+        key: String(issue.path[issue.path.length - 1]),
+      },
+    ];
+  }
+  return [];
+}
+
+function formatIssue(issue: z.core.$ZodIssue, input: unknown): KtxConfigIssue[] {
+  const unknownKeys = unknownKeyLocations(issue);
+  if (unknownKeys.length > 0) {
+    return unknownKeys.map(({ containerPath, key }) => {
+      const base = dottedPath(containerPath);
+      const fullPath = base.length > 0 ? `${base}.${key}` : key;
+      return {
+        path: fullPath,
+        message: `Unsupported ${fullPath}: unknown field (ignored)`,
+        fix: 'Unknown to this ktx version; it is ignored. Delete it from ktx.yaml when convenient.',
+        severity: 'warning',
+      };
     });
   }
 
+  const basePath = dottedPath(issue.path);
   const lastSegment = issue.path[issue.path.length - 1];
   if (lastSegment === 'backend' && (issue.code === 'invalid_value' || issue.code === 'invalid_type')) {
     const value = valueAtPath(input, issue.path);
-    return [{ path: basePath, message: `Unsupported ${basePath}: ${String(value)}` }];
+    return [{ path: basePath, message: `Unsupported ${basePath}: ${String(value)}`, severity: 'error' }];
   }
 
-  return [{ path: basePath, message: basePath.length > 0 ? `${basePath}: ${issue.message}` : issue.message }];
+  return [
+    {
+      path: basePath,
+      message: basePath.length > 0 ? `${basePath}: ${issue.message}` : issue.message,
+      severity: 'error',
+    },
+  ];
 }
 
 function collectIssues(error: z.ZodError, input: unknown): KtxConfigIssue[] {
@@ -359,16 +401,45 @@ export function buildDefaultKtxProjectConfig(): KtxProjectConfig {
   return ktxProjectConfigSchema.parse({});
 }
 
+function stripUnrecognizedKeys(input: Record<string, unknown>): Record<string, unknown> {
+  const result = ktxProjectConfigSchema.safeParse(input);
+  if (result.success) {
+    return input;
+  }
+  const unknownKeys = result.error.issues.flatMap(unknownKeyLocations);
+  if (unknownKeys.length === 0) {
+    return input;
+  }
+  const value = structuredClone(input);
+  for (const { containerPath, key } of unknownKeys) {
+    const container = valueAtPath(value, containerPath);
+    if (container === null || typeof container !== 'object') continue;
+    delete (container as Record<string, unknown>)[key];
+  }
+  return value;
+}
+
+function parseTolerant(input: Record<string, unknown>): KtxProjectConfig {
+  const value = stripUnrecognizedKeys(input);
+  const result = ktxProjectConfigSchema.safeParse(value);
+  if (!result.success) {
+    throw new Error(formatZodError(result.error, value));
+  }
+  return result.data;
+}
+
+/**
+ * Parse and validate a ktx.yaml document. Keys this ktx version does not
+ * recognize are stripped from the returned config — never from the file, which
+ * a load must not rewrite — so a config written by a different ktx version
+ * still loads. Malformed values on recognized fields still throw.
+ */
 export function parseKtxProjectConfig(raw: string): KtxProjectConfig {
   const parsed = YAML.parse(raw) as unknown;
   if (!isRecord(parsed)) {
     throw new Error('ktx.yaml must contain a YAML object');
   }
-  const result = ktxProjectConfigSchema.safeParse(parsed);
-  if (!result.success) {
-    throw new Error(formatZodError(result.error, parsed));
-  }
-  return result.data;
+  return parseTolerant(parsed);
 }
 
 export function validateKtxProjectConfig(raw: string): KtxConfigValidation {
@@ -377,16 +448,18 @@ export function validateKtxProjectConfig(raw: string): KtxConfigValidation {
     parsed = YAML.parse(raw);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return { ok: false, issues: [{ path: '', message: `ktx.yaml parse error: ${message}` }] };
+    return { ok: false, issues: [{ path: '', message: `ktx.yaml parse error: ${message}`, severity: 'error' }] };
   }
   if (!isRecord(parsed)) {
-    return { ok: false, issues: [{ path: '', message: 'ktx.yaml must contain a YAML object' }] };
+    return { ok: false, issues: [{ path: '', message: 'ktx.yaml must contain a YAML object', severity: 'error' }] };
   }
   const result = ktxProjectConfigSchema.safeParse(parsed);
   if (result.success) {
     return { ok: true, issues: [] };
   }
-  return { ok: false, issues: collectIssues(result.error, parsed) };
+  const issues = collectIssues(result.error, parsed);
+  const ok = !issues.some((issue) => issue.severity === 'error');
+  return { ok, issues };
 }
 
 export function generateKtxProjectConfigJsonSchema(): Record<string, unknown> {

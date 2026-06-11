@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
-import { GitService } from '../../context/core/git.service.js';
+import { classifyKtxRepoOwnership, GitService, KtxForeignGitRepositoryError } from '../../context/core/git.service.js';
 import { type KtxCoreConfig, type KtxLogger, noopLogger } from '../../context/core/config.js';
 import type { KtxProjectConfig } from './config.js';
 import { buildDefaultKtxProjectConfig, parseKtxProjectConfig, serializeKtxProjectConfig } from './config.js';
@@ -112,14 +112,24 @@ export async function initKtxProject(options: InitKtxProjectOptions): Promise<In
     throw new Error(`Project already contains ktx.yaml: ${configPath}`);
   }
 
-  const config = buildDefaultKtxProjectConfig();
-  const runtime = await createRuntime(projectDir, config, authorName, authorEmail, logger);
+  // Must run before ktx.yaml is written: once that file exists the directory
+  // classifies as ktx-managed, so a foreign repo would be silently adopted.
+  if ((await classifyKtxRepoOwnership(projectDir)) === 'foreign') {
+    throw new KtxForeignGitRepositoryError(projectDir);
+  }
 
-  await writeProjectFile(projectDir, 'ktx.yaml', serializeKtxProjectConfig(config));
+  const config = buildDefaultKtxProjectConfig();
+
+  // ktx.yaml (the ownership signal) is written before git init, so an
+  // interrupted init can never leave a bare `.git` without it — residue that
+  // would classify as a foreign repo and be unrecoverable.
   await fs.mkdir(join(projectDir, '.ktx/cache'), { recursive: true });
   for (const file of TRACKED_SCAFFOLD_FILES) {
     await writeProjectFile(projectDir, file.path, file.content);
   }
+  await writeProjectFile(projectDir, 'ktx.yaml', serializeKtxProjectConfig(config));
+
+  const runtime = await createRuntime(projectDir, config, authorName, authorEmail, logger);
 
   const commit = await runtime.git.commitFiles(
     ['ktx.yaml', ...TRACKED_SCAFFOLD_FILES.map((file) => file.path)],

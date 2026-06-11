@@ -27,11 +27,9 @@ export interface WorktreeEntry {
   head: string | null;
 }
 
-const KTX_MANAGED_GIT_CONFIG_KEY = 'ktx.managed';
-
 export type KtxRepoOwnership = 'unowned' | 'ktx-managed' | 'foreign';
 
-class KtxForeignGitRepositoryError extends Error {
+export class KtxForeignGitRepositoryError extends Error {
   constructor(configDir: string) {
     super(
       `${configDir} is already a git repository that ktx did not create. ` +
@@ -46,21 +44,16 @@ function isNodeErrnoException(error: unknown): error is NodeJS.ErrnoException {
 }
 
 /**
- * Classify whether ktx may own a git repository rooted exactly at `dir`.
+ * Classify whether ktx may own a git repository rooted exactly at `dir`. A root
+ * `ktx.yaml` is the ownership signal; the working tree decides, not git history,
+ * because older ktx versions left `ktx.yaml` uncommitted (it holds secret refs).
  *
- * - `unowned`: there is no git repository for ktx to avoid here → ktx may
- *   `git init`. Covers a fresh standalone directory, a fresh directory nested
- *   inside a parent repo, a path that does not exist yet, and a path that is not
- *   a directory at all (whether the path is a usable project directory is a
- *   separate concern for the caller to validate).
- * - `ktx-managed`: `<dir>/.git` is a directory carrying ktx's ownership marker.
- * - `foreign`: a repo ktx did not create — a `.git` directory without the marker,
- *   or a `.git` *file* (a linked worktree). ktx must never adopt or mutate it.
+ * - `unowned`: no repo here (including a missing or non-directory path) → ktx may `git init`.
+ * - `ktx-managed`: `<dir>/.git` is a directory and `ktx.yaml` sits at the root.
+ * - `foreign`: any other repo — no root `ktx.yaml`, or a `.git` *file* (a linked
+ *   worktree). ktx must never adopt or mutate it.
  *
- * Reads only `<dir>/.git` directly and never walks up the directory tree, so the
- * classification of a project dir never depends on whether a parent repo exists.
- * Shared by `GitService.initialize()` (the invariant) and the setup wizard (the
- * pre-flight guidance) so both decide ownership from the same rule.
+ * Reads only `<dir>` itself; never walks up, so a parent repo cannot change the answer.
  */
 export async function classifyKtxRepoOwnership(dir: string): Promise<KtxRepoOwnership> {
   let dotGitIsDirectory: boolean;
@@ -78,13 +71,9 @@ export async function classifyKtxRepoOwnership(dir: string): Promise<KtxRepoOwne
     return 'foreign';
   }
   try {
-    const marker = await createSimpleGit(dir).raw([
-      'config',
-      '--local',
-      '--get',
-      KTX_MANAGED_GIT_CONFIG_KEY,
-    ]);
-    return marker.trim() === 'true' ? 'ktx-managed' : 'foreign';
+    // stat (not lstat): follow symlinks, matching what `loadKtxProject`'s
+    // readFile accepts — a dir that loads as a ktx project classifies as one.
+    return (await fs.stat(join(dir, 'ktx.yaml'))).isFile() ? 'ktx-managed' : 'foreign';
   } catch {
     return 'foreign';
   }
@@ -168,7 +157,6 @@ export class GitService {
       }
       if (ownership === 'unowned') {
         await this.git.init();
-        await this.git.addConfig(KTX_MANAGED_GIT_CONFIG_KEY, 'true');
         this.logger.log('Initialized ktx-managed git repository');
       }
       // ownership === 'ktx-managed' → ktx's own repo; proceed with the normal re-run path.
