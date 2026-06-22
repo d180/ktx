@@ -14,6 +14,7 @@ const warehouseDrivers = [
   'duckdb',
   'clickhouse',
   'sqlserver',
+  'athena',
 ] as const;
 
 type WarehouseDriver = (typeof warehouseDrivers)[number];
@@ -56,6 +57,7 @@ const warehouseConnectionSchemas = [
   warehouseConnectionSchema('duckdb'),
   warehouseConnectionSchema('clickhouse'),
   warehouseConnectionSchema('sqlserver'),
+  warehouseConnectionSchema('athena'),
 ] as const;
 
 const mongodbConnectionSchema = z
