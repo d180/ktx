@@ -23,6 +23,7 @@ import {
   type KtxTableSampleInput,
   type KtxTableSampleResult,
 } from '../../context/scan/types.js';
+import { scopedTableNames } from '../../context/scan/table-ref.js';
 import { resolveStringReference } from '../shared/string-reference.js';
 
 export interface KtxAthenaConnectionConfig {
@@ -100,6 +101,7 @@ export interface KtxGlueTable {
   Name?: string;
   TableType?: string;
   StorageDescriptor?: KtxGlueStorageDescriptor;
+  PartitionKeys?: KtxGlueColumnDef[];
   Description?: string;
   Parameters?: Record<string, string>;
 }
@@ -239,6 +241,8 @@ function glueTableKind(tableType: string | undefined): KtxSchemaTable['kind'] {
 
 /** Poll interval for Athena query execution status checks (ms). */
 const POLL_INTERVAL_MS = 250;
+/** Maximum wall-clock time to wait for a single Athena query to reach a terminal state (ms). */
+const QUERY_TIMEOUT_MS = 5 * 60 * 1000;
 
 export interface KtxAthenaScanConnectorOptions {
   connectionId: string;
@@ -295,7 +299,10 @@ export class KtxAthenaScanConnector implements KtxScanConnector {
     const databases = await this.listDatabasesPaginated({});
     const tables: KtxSchemaTable[] = [];
     for (const database of databases) {
-      tables.push(...(await this.introspectDatabase(database)));
+      const scopedNames = input.tableScope
+        ? scopedTableNames(input.tableScope, { catalog: this.resolved.catalog, db: database })
+        : null;
+      tables.push(...(await this.introspectDatabase(database, scopedNames)));
     }
     return {
       connectionId: this.connectionId,
@@ -412,10 +419,12 @@ export class KtxAthenaScanConnector implements KtxScanConnector {
     return tables;
   }
 
-  private async introspectDatabase(database: string): Promise<KtxSchemaTable[]> {
+  private async introspectDatabase(database: string, scopedNames: readonly string[] | null): Promise<KtxSchemaTable[]> {
+    if (scopedNames && scopedNames.length === 0) return [];
     const glueTables = await this.listGlueTablesPaginated(database);
+    const scopeSet = scopedNames ? new Set(scopedNames) : null;
     return glueTables
-      .filter((t): t is KtxGlueTable & { Name: string } => Boolean(t.Name))
+      .filter((t): t is KtxGlueTable & { Name: string } => Boolean(t.Name) && (!scopeSet || scopeSet.has(t.Name!)))
       .map((t) => ({
         catalog: this.resolved.catalog,
         db: database,
@@ -429,7 +438,7 @@ export class KtxAthenaScanConnector implements KtxScanConnector {
   }
 
   private toSchemaColumns(table: KtxGlueTable): KtxSchemaColumn[] {
-    const columns = table.StorageDescriptor?.Columns ?? [];
+    const columns = [...(table.StorageDescriptor?.Columns ?? []), ...(table.PartitionKeys ?? [])];
     return columns
       .filter((col): col is KtxGlueColumnDef & { Name: string } => Boolean(col.Name))
       .map((col) => {
@@ -506,6 +515,7 @@ export class KtxAthenaScanConnector implements KtxScanConnector {
 
   private async waitForQueryCompletion(athena: KtxAthenaClient, queryExecutionId: string): Promise<void> {
     const terminalStates = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED']);
+    const deadline = this.now().getTime() + QUERY_TIMEOUT_MS;
     for (;;) {
       const { QueryExecution } = await athena.getQueryExecution({ QueryExecutionId: queryExecutionId });
       const state = QueryExecution?.Status?.State ?? '';
@@ -513,6 +523,9 @@ export class KtxAthenaScanConnector implements KtxScanConnector {
       if (terminalStates.has(state)) {
         const reason = QueryExecution?.Status?.StateChangeReason ?? state;
         throw new Error(`Athena query ${state}: ${reason}`);
+      }
+      if (this.now().getTime() >= deadline) {
+        throw new Error(`Athena query ${queryExecutionId} timed out after ${QUERY_TIMEOUT_MS / 1000}s`);
       }
       await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
     }

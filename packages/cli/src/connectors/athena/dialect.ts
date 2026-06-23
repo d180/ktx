@@ -3,7 +3,6 @@ import {
   columnDisplayPartCount,
   formatDialectDisplayRef,
   formatDialectTableName,
-  limitOffsetClause,
   parseDialectDisplayRef,
 } from '../../context/connections/dialect-helpers.js';
 import type { KtxSchemaDimensionType, KtxTableRef } from '../../context/scan/types.js';
@@ -152,11 +151,13 @@ export class KtxAthenaDialect implements KtxDialect {
   }
 
   getSampleValueAggregation(innerSql: string): string {
-    return `(SELECT array_join(array_agg(CAST(value AS VARCHAR)), '') FROM (${innerSql}) AS relationship_profile_values)`;
+    return `(SELECT array_join(array_agg(CAST(value AS VARCHAR)), '\u001f') FROM (${innerSql}) AS relationship_profile_values)`;
   }
 
   getLimitOffsetClause(limit: number, offset?: number): string {
-    return limitOffsetClause(limit, offset);
+    const safeLimit = Math.max(1, Math.floor(limit));
+    const safeOffset = offset !== undefined ? Math.floor(offset) : 0;
+    return safeOffset > 0 ? `OFFSET ${safeOffset} LIMIT ${safeLimit}` : `LIMIT ${safeLimit}`;
   }
 
   getTopClause(_limit: number): string {

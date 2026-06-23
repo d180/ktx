@@ -8,6 +8,7 @@ import {
   type KtxGlueClient,
 } from '../../../src/connectors/athena/connector.js';
 import { createAthenaLiveDatabaseIntrospection } from '../../../src/connectors/athena/live-database-introspection.js';
+import { tableRefSet } from '../../../src/context/scan/table-ref.js';
 
 function fakeClientFactory(options: { queryState?: string; queryError?: string } = {}): KtxAthenaClientFactory {
   const state = options.queryState ?? 'SUCCEEDED';
@@ -58,6 +59,7 @@ function fakeClientFactory(options: { queryState?: string; queryError?: string }
               { Name: 'status', Type: 'string' },
             ],
           },
+          PartitionKeys: [{ Name: 'dt', Type: 'date', Comment: 'Partition date' }],
         },
       ],
       NextToken: undefined,
@@ -140,7 +142,7 @@ describe('KtxAthenaScanConnector', () => {
         catalog: 'AwsDataCatalog',
         databases: ['analytics'],
         table_count: 1,
-        total_columns: 2,
+        total_columns: 3,
       },
     });
 
@@ -173,7 +175,46 @@ describe('KtxAthenaScanConnector', () => {
         primaryKey: false,
         comment: null,
       },
+      {
+        name: 'dt',
+        nativeType: 'date',
+        normalizedType: 'DATE',
+        dimensionType: 'time',
+        nullable: true,
+        primaryKey: false,
+        comment: 'Partition date',
+      },
     ]);
+  });
+
+  it('respects tableScope and excludes tables not in scope', async () => {
+    const connector = new KtxAthenaScanConnector({
+      connectionId: 'dw',
+      connection,
+      clientFactory: fakeClientFactory(),
+      now: () => new Date('2026-06-21T10:00:00.000Z'),
+    });
+
+    const scopedSnapshot = await connector.introspect(
+      {
+        connectionId: 'dw',
+        driver: 'athena',
+        tableScope: tableRefSet([{ catalog: 'AwsDataCatalog', db: 'analytics', name: 'nonexistent' }]),
+      },
+      { runId: 'scan-1' },
+    );
+    expect(scopedSnapshot.tables).toHaveLength(0);
+
+    const matchingSnapshot = await connector.introspect(
+      {
+        connectionId: 'dw',
+        driver: 'athena',
+        tableScope: tableRefSet([{ catalog: 'AwsDataCatalog', db: 'analytics', name: 'orders' }]),
+      },
+      { runId: 'scan-1' },
+    );
+    expect(matchingSnapshot.tables).toHaveLength(1);
+    expect(matchingSnapshot.tables[0]?.name).toBe('orders');
   });
 
   it('samples a table via Athena query execution', async () => {
@@ -340,6 +381,95 @@ describe('KtxAthenaScanConnector', () => {
     await expect(
       connector.executeReadOnly({ connectionId: 'dw', sql: 'SELECT 1' }, { runId: 'scan-1' }),
     ).rejects.toThrow('Athena query FAILED: Syntax error in SQL');
+  });
+
+  it('throws when query execution times out', async () => {
+    let callCount = 0;
+    // First now() call sets the deadline; second call simulates time past it.
+    const now = () => (++callCount === 1 ? new Date(0) : new Date(5 * 60 * 1000 + 1));
+
+    const connector = new KtxAthenaScanConnector({
+      connectionId: 'dw',
+      connection,
+      clientFactory: fakeClientFactory({ queryState: 'RUNNING' }),
+      now,
+    });
+
+    await expect(
+      connector.executeReadOnly({ connectionId: 'dw', sql: 'SELECT 1' }, { runId: 'scan-1' }),
+    ).rejects.toThrow('timed out after 300s');
+  });
+
+  it('passes the exact column list to Athena when sampling specific columns', async () => {
+    const factory = fakeClientFactory();
+    const athenaClient = factory.createAthenaClient('us-east-1');
+    const connector = new KtxAthenaScanConnector({
+      connectionId: 'dw',
+      connection,
+      clientFactory: { createAthenaClient: vi.fn(() => athenaClient), createGlueClient: factory.createGlueClient },
+    });
+
+    await connector.sampleTable(
+      {
+        connectionId: 'dw',
+        table: { catalog: 'AwsDataCatalog', db: 'analytics', name: 'orders' },
+        columns: ['id', 'status'],
+        limit: 5,
+      },
+      { runId: 'scan-1' },
+    );
+
+    expect(vi.mocked(athenaClient.startQueryExecution).mock.calls[0]?.[0].QueryString).toBe(
+      'SELECT "id", "status" FROM "AwsDataCatalog"."analytics"."orders" LIMIT 5',
+    );
+  });
+
+  it('paginates Glue databases and tables across multiple pages', async () => {
+    const glueClient: KtxGlueClient = {
+      getDatabases: vi.fn()
+        .mockResolvedValueOnce({ DatabaseList: [{ Name: 'db1' }], NextToken: 'page2' })
+        .mockResolvedValueOnce({ DatabaseList: [{ Name: 'db2' }], NextToken: undefined }),
+      getTables: vi.fn().mockImplementation(async ({ DatabaseName }: { DatabaseName: string }) => {
+        if (DatabaseName === 'db1') {
+          return {
+            TableList: [
+              {
+                Name: 'table_a',
+                TableType: 'EXTERNAL_TABLE',
+                StorageDescriptor: { Columns: [{ Name: 'id', Type: 'bigint' }] },
+              },
+            ],
+            NextToken: undefined,
+          };
+        }
+        return {
+          TableList: [
+            {
+              Name: 'table_b',
+              TableType: 'EXTERNAL_TABLE',
+              StorageDescriptor: { Columns: [{ Name: 'id', Type: 'bigint' }] },
+            },
+          ],
+          NextToken: undefined,
+        };
+      }),
+    };
+
+    const connector = new KtxAthenaScanConnector({
+      connectionId: 'dw',
+      connection,
+      clientFactory: {
+        createAthenaClient: vi.fn(() => fakeClientFactory().createAthenaClient('us-east-1')),
+        createGlueClient: vi.fn(() => glueClient),
+      },
+      now: () => new Date('2026-06-21T10:00:00.000Z'),
+    });
+
+    const snapshot = await connector.introspect({ connectionId: 'dw', driver: 'athena' }, { runId: 'scan-1' });
+
+    expect(vi.mocked(glueClient.getDatabases)).toHaveBeenCalledTimes(2);
+    expect(snapshot.metadata).toMatchObject({ databases: ['db1', 'db2'], table_count: 2 });
+    expect(snapshot.tables.map((t) => t.name)).toEqual(['table_a', 'table_b']);
   });
 
   it('adapts to the live-database introspection port via factory', async () => {

@@ -41,6 +41,7 @@ Agents should prefer environment or file references over literal secrets.
 | `s3_staging_dir` | Yes | Athena | S3 URI for Athena query result storage (e.g. `s3://my-bucket/athena-results/`) |
 | `workgroup` | No | Athena | Athena workgroup name (default `primary`) |
 | `catalog` | No | Athena | Glue Data Catalog name (default `AwsDataCatalog`) |
+| `database` | No | Athena | Default Glue database name passed as the query execution context |
 
 ## PostgreSQL
 
@@ -363,11 +364,13 @@ The IAM principal must have `athena:StartQueryExecution`, `athena:GetQueryExecut
 ### Dialect notes
 
 - SQL dialect is Presto/Trino; identifiers are quoted with double-quotes
-- Table names use two-part format: `"database"."table"` (catalog is not included in SQL)
+- Table names use three-part format: `"catalog"."database"."table"` (e.g. `"AwsDataCatalog"."analytics"."orders"`)
+- Partition columns (`PartitionKeys` in Glue) are included after regular columns in the schema and are fully queryable
 - Athena does not support `TABLESAMPLE`; random sampling uses `ORDER BY rand()`
 - Query execution is asynchronous: **ktx** starts the query, polls until completion, then fetches results from S3
 - Results are stored in `s3_staging_dir`; the IAM principal needs write access to that bucket
 - Use `workgroup` to apply per-workgroup cost controls and result configuration
+- The connector always uses your account's default Glue Data Catalog; cross-account catalog access (`CatalogId` pointing to another account) is not supported
 
 ---
 

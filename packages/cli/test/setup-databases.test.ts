@@ -243,6 +243,7 @@ describe('setup databases step', () => {
         { value: 'mysql', label: 'MySQL' },
         { value: 'clickhouse', label: 'ClickHouse' },
         { value: 'sqlserver', label: 'SQL Server' },
+        { value: 'athena', label: 'Amazon Athena' },
         { value: 'mongodb', label: 'MongoDB' },
         { value: 'sqlite', label: 'SQLite' },
         { value: 'duckdb', label: 'DuckDB' },
@@ -615,6 +616,29 @@ describe('setup databases step', () => {
         expectedPasswordPrompts: [
           {
             message: 'Snowflake password',
+          },
+        ],
+      },
+      {
+        driver: 'athena',
+        textValues: ['', 'us-east-1', 's3://my-bucket/athena-results/', '', ''],
+        expectedTextPrompts: [
+          {
+            message: connectionNamePrompt('Amazon Athena'),
+            placeholder: 'athena-warehouse',
+            initialValue: 'athena-warehouse',
+          },
+          {
+            message: 'AWS region\nFor example us-east-1.',
+          },
+          {
+            message: 'S3 staging directory\nAthena writes query results here. For example s3://my-bucket/athena-results/.',
+          },
+          {
+            message: 'Athena workgroup (optional)\nPress Enter to use the default workgroup "primary".',
+          },
+          {
+            message: 'Glue Data Catalog name (optional)\nPress Enter to use the default "AwsDataCatalog".',
           },
         ],
       },
