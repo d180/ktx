@@ -42,6 +42,7 @@ Agents should prefer environment or file references over literal secrets.
 | `workgroup` | No | Athena | Athena workgroup name (default `primary`) |
 | `catalog` | No | Athena | Glue Data Catalog name (default `AwsDataCatalog`) |
 | `database` | No | Athena | Default Glue database name passed as the query execution context |
+| `databases` | No | Athena | Glue databases to include in schema scans; written by `ktx setup` and read by `ktx ingest` |
 
 ## PostgreSQL
 
@@ -334,7 +335,12 @@ connections:
     workgroup: analytics
     catalog: AwsDataCatalog
     database: my_default_database
+    databases:
+      - analytics
+      - raw
 ```
+
+`ktx setup` writes the `databases` array when you select Glue databases during setup. `ktx scan` reads it to limit introspection to those databases.
 
 ### Authentication
 

@@ -271,6 +271,13 @@ const SCOPE_DISCOVERY_SPECS: Partial<Record<KtxSetupDatabaseDriver, ScopeDiscove
     configSingleField: 'schema_name',
     suggest: defaultSuggest,
   },
+  athena: {
+    noun: 'database',
+    nounPlural: 'databases',
+    promptLabel: 'Glue databases',
+    configArrayField: 'databases',
+    suggest: defaultSuggest,
+  },
 };
 
 type UrlDriverType = Extract<KtxSetupDatabaseDriver, 'postgres' | 'mysql' | 'clickhouse' | 'sqlserver'>;
@@ -1009,6 +1016,7 @@ async function buildConnectionConfig(input: {
       s3_staging_dir: s3StagingDir,
       ...(workgroup ? { workgroup } : {}),
       ...(catalog ? { catalog } : {}),
+      ...scriptedScopeConfigForDriver('athena', args.databaseSchemas),
     };
   }
   throw new Error(`Unsupported database driver: ${driver}`);

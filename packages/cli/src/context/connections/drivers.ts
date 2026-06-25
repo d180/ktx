@@ -28,7 +28,7 @@ function invalidConnectionConfig(driver: KtxConnectionDriver): Error {
 export const driverRegistrations: Record<KtxConnectionDriver, KtxDriverRegistration> = {
   athena: {
     driver: 'athena',
-    scopeConfigKey: null,
+    scopeConfigKey: 'databases',
     hasHistoricSqlReader: false,
     load: async () => {
       const m = await import('../../connectors/athena/connector.js');

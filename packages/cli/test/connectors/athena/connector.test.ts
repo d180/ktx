@@ -12,9 +12,15 @@ import { tableRefSet } from '../../../src/context/scan/table-ref.js';
 
 function fakeClientFactory(options: { queryState?: string; queryError?: string } = {}): KtxAthenaClientFactory {
   const state = options.queryState ?? 'SUCCEEDED';
+  const queries = new Map<string, string>();
+  let execCounter = 0;
 
   const fakeAthenaClient: KtxAthenaClient = {
-    startQueryExecution: vi.fn(async () => ({ QueryExecutionId: 'exec-1' })),
+    startQueryExecution: vi.fn(async (input) => {
+      const id = `exec-${++execCounter}`;
+      queries.set(id, input.QueryString);
+      return { QueryExecutionId: id };
+    }),
     getQueryExecution: vi.fn(async () => ({
       QueryExecution: {
         Status: {
@@ -23,23 +29,39 @@ function fakeClientFactory(options: { queryState?: string; queryError?: string }
         },
       },
     })),
-    getQueryResults: vi.fn(async () => ({
-      ResultSet: {
-        ResultSetMetadata: {
-          ColumnInfo: [
-            { Name: 'id', Type: 'bigint' },
-            { Name: 'status', Type: 'string' },
+    getQueryResults: vi.fn(async (input) => {
+      const sql = queries.get(input.QueryExecutionId) ?? '';
+      // Column sample query: single-column result for the queried column only.
+      if (sql.includes('IS NOT NULL')) {
+        return {
+          ResultSet: {
+            ResultSetMetadata: { ColumnInfo: [{ Name: 'status', Type: 'string' }] },
+            Rows: [
+              { Data: [{ VarCharValue: 'status' }] }, // header row
+              { Data: [{ VarCharValue: 'paid' }] },
+            ],
+          },
+          NextToken: undefined,
+        };
+      }
+      return {
+        ResultSet: {
+          ResultSetMetadata: {
+            ColumnInfo: [
+              { Name: 'id', Type: 'bigint' },
+              { Name: 'status', Type: 'string' },
+            ],
+          },
+          Rows: [
+            // Header row (Athena always includes it on first page)
+            { Data: [{ VarCharValue: 'id' }, { VarCharValue: 'status' }] },
+            // Data row
+            { Data: [{ VarCharValue: '1' }, { VarCharValue: 'paid' }] },
           ],
         },
-        Rows: [
-          // Header row (Athena always includes it on first page)
-          { Data: [{ VarCharValue: 'id' }, { VarCharValue: 'status' }] },
-          // Data row
-          { Data: [{ VarCharValue: '1' }, { VarCharValue: 'paid' }] },
-        ],
-      },
-      NextToken: undefined,
-    })),
+        NextToken: undefined,
+      };
+    }),
   };
 
   const fakeGlueClient: KtxGlueClient = {
@@ -259,7 +281,7 @@ describe('KtxAthenaScanConnector', () => {
     );
 
     expect(result).toMatchObject({
-      values: ['1'],
+      values: ['paid'],
       nullCount: null,
       distinctCount: null,
     });
@@ -470,6 +492,58 @@ describe('KtxAthenaScanConnector', () => {
     expect(vi.mocked(glueClient.getDatabases)).toHaveBeenCalledTimes(2);
     expect(snapshot.metadata).toMatchObject({ databases: ['db1', 'db2'], table_count: 2 });
     expect(snapshot.tables.map((t) => t.name)).toEqual(['table_a', 'table_b']);
+  });
+
+  it('paginates Athena query results across multiple pages', async () => {
+    const factory = fakeClientFactory();
+    const athenaClient = factory.createAthenaClient('us-east-1');
+    vi.mocked(athenaClient.getQueryResults)
+      .mockResolvedValueOnce({
+        ResultSet: {
+          ResultSetMetadata: {
+            ColumnInfo: [
+              { Name: 'id', Type: 'bigint' },
+              { Name: 'status', Type: 'string' },
+            ],
+          },
+          Rows: [
+            // Header row — only present on the first page
+            { Data: [{ VarCharValue: 'id' }, { VarCharValue: 'status' }] },
+            { Data: [{ VarCharValue: '1' }, { VarCharValue: 'paid' }] },
+            { Data: [{ VarCharValue: '2' }, { VarCharValue: 'shipped' }] },
+          ],
+        },
+        NextToken: 'page-2',
+      })
+      .mockResolvedValueOnce({
+        ResultSet: {
+          ResultSetMetadata: { ColumnInfo: [] },
+          // No header row on subsequent pages
+          Rows: [{ Data: [{ VarCharValue: '3' }, { VarCharValue: 'pending' }] }],
+        },
+        NextToken: undefined,
+      });
+
+    const connector = new KtxAthenaScanConnector({
+      connectionId: 'dw',
+      connection,
+      clientFactory: { createAthenaClient: vi.fn(() => athenaClient), createGlueClient: factory.createGlueClient },
+    });
+
+    const result = await connector.executeReadOnly(
+      { connectionId: 'dw', sql: 'SELECT id, status FROM "analytics"."orders"', maxRows: 100 },
+      { runId: 'scan-1' },
+    );
+
+    expect(result.headers).toEqual(['id', 'status']);
+    expect(result.rows).toEqual([
+      ['1', 'paid'],
+      ['2', 'shipped'],
+      ['3', 'pending'],
+    ]);
+    expect(result.rowCount).toBe(3);
+    expect(vi.mocked(athenaClient.getQueryResults)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(athenaClient.getQueryResults).mock.calls[1]?.[0].NextToken).toBe('page-2');
   });
 
   it('adapts to the live-database introspection port via factory', async () => {

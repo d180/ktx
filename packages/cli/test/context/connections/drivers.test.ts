@@ -146,11 +146,7 @@ describe('driverRegistrations', () => {
     expect(connector.listTables).toEqual(expect.any(Function));
     await connector.cleanup?.();
 
-    if (
-      registration.driver === 'sqlite' ||
-      registration.driver === 'duckdb' ||
-      registration.driver === 'athena'
-    ) {
+    if (registration.driver === 'sqlite' || registration.driver === 'duckdb') {
       expect(registration.scopeConfigKey).toBeNull();
     } else {
       expect(registration.scopeConfigKey).not.toBeNull();

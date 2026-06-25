@@ -33,6 +33,7 @@ export interface KtxAthenaConnectionConfig {
   workgroup?: string;
   catalog?: string;
   database?: string;
+  databases?: string[];
   [key: string]: unknown;
 }
 
@@ -233,15 +234,13 @@ export function athenaConnectionConfigFromConfig(input: {
   };
 }
 
-function glueTableKind(tableType: string | undefined): KtxSchemaTable['kind'] {
+function glueTableKind(tableType: string | undefined): 'table' | 'view' {
   const t = String(tableType ?? '').toUpperCase();
   if (t === 'VIRTUAL_VIEW') return 'view';
   return 'table';
 }
 
-/** Poll interval for Athena query execution status checks (ms). */
 const POLL_INTERVAL_MS = 250;
-/** Maximum wall-clock time to wait for a single Athena query to reach a terminal state (ms). */
 const QUERY_TIMEOUT_MS = 5 * 60 * 1000;
 
 export interface KtxAthenaScanConnectorOptions {
@@ -364,7 +363,7 @@ export class KtxAthenaScanConnector implements KtxScanConnector {
           catalog: this.resolved.catalog,
           schema: database,
           name: t.Name,
-          kind: glueTableKind(t.TableType) === 'view' ? 'view' : 'table',
+          kind: glueTableKind(t.TableType),
         });
       }
     }
