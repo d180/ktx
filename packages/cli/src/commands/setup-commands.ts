@@ -58,6 +58,7 @@ function sourceType(value: string): KtxSetupSourceType {
     value === 'looker' ||
     value === 'lookml' ||
     value === 'notion' ||
+    value === 'sigma' ||
     value === 'gdrive'
   ) {
     return value;
