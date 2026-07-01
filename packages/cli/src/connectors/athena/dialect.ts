@@ -1,4 +1,4 @@
-import type { KtxDialect } from '../../context/connections/dialects.js';
+import type { KtxSqlDialect } from '../../context/connections/dialects.js';
 import {
   columnDisplayPartCount,
   formatDialectDisplayRef,
@@ -10,7 +10,7 @@ import type { KtxSchemaDimensionType, KtxTableRef } from '../../context/scan/typ
 type AthenaTableNameRef = Pick<KtxTableRef, 'name'> & Partial<Pick<KtxTableRef, 'catalog' | 'db'>>;
 
 /** @internal */
-export class KtxAthenaDialect implements KtxDialect {
+export class KtxAthenaDialect implements KtxSqlDialect {
   readonly type = 'athena' as const;
 
   private readonly dimensionTypeMappings: Record<string, KtxSchemaDimensionType> = {

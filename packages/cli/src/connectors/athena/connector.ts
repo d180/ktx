@@ -1,6 +1,6 @@
 import { AthenaClient, StartQueryExecutionCommand, GetQueryExecutionCommand, GetQueryResultsCommand } from '@aws-sdk/client-athena';
 import { GlueClient, GetDatabasesCommand, GetTablesCommand } from '@aws-sdk/client-glue';
-import { getDialectForDriver } from '../../context/connections/dialects.js';
+import { getSqlDialectForDriver } from '../../context/connections/dialects.js';
 import { assertReadOnlySql, limitSqlForExecution } from '../../context/connections/read-only-sql.js';
 import {
   connectorTestFailure,
@@ -282,7 +282,7 @@ export class KtxAthenaScanConnector implements KtxScanConnector {
   private readonly resolved: KtxAthenaResolvedConnectionConfig;
   private readonly clientFactory: KtxAthenaClientFactory;
   private readonly now: () => Date;
-  private readonly dialect = getDialectForDriver('athena');
+  private readonly dialect = getSqlDialectForDriver('athena');
   private athenaClient: KtxAthenaClient | null = null;
   private glueClient: KtxGlueClient | null = null;
 
