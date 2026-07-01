@@ -43,6 +43,7 @@ export interface KtxAthenaResolvedConnectionConfig {
   workgroup: string;
   catalog: string;
   database: string | undefined;
+  databases: string[];
 }
 
 interface KtxAthenaQueryExecutionStatus {
@@ -193,7 +194,19 @@ function stringConfigValue(
   env: NodeJS.ProcessEnv,
 ): string | undefined {
   const value = connection?.[key];
-  return typeof value === 'string' && value.trim().length > 0 ? resolveStringReference(value.trim(), env) : undefined;
+  if (typeof value !== 'string' || value.trim().length === 0) return undefined;
+  // Resolve before checking emptiness: an unset `env:` reference resolves to '',
+  // which must become undefined so `?? default` applies instead of keeping ''.
+  const resolved = resolveStringReference(value.trim(), env).trim();
+  return resolved.length > 0 ? resolved : undefined;
+}
+
+function configuredAthenaDatabases(connection: KtxAthenaConnectionConfig): string[] {
+  if (!Array.isArray(connection.databases)) return [];
+  const selected = connection.databases
+    .filter((database): database is string => typeof database === 'string' && database.trim().length > 0)
+    .map((database) => database.trim());
+  return [...new Set(selected)];
 }
 
 export function isKtxAthenaConnectionConfig(
@@ -231,6 +244,7 @@ export function athenaConnectionConfigFromConfig(input: {
     workgroup: stringConfigValue(input.connection, 'workgroup', env) ?? 'primary',
     catalog: stringConfigValue(input.connection, 'catalog', env) ?? 'AwsDataCatalog',
     database: stringConfigValue(input.connection, 'database', env),
+    databases: configuredAthenaDatabases(input.connection),
   };
 }
 
@@ -295,7 +309,10 @@ export class KtxAthenaScanConnector implements KtxScanConnector {
 
   async introspect(input: KtxScanInput, _ctx: KtxScanContext): Promise<KtxSchemaSnapshot> {
     this.assertConnection(input.connectionId);
-    const databases = await this.listDatabasesPaginated({});
+    // Honor the configured `databases` scope (written by `ktx setup`); fall back
+    // to every Glue database only when the scope is unset.
+    const databases =
+      this.resolved.databases.length > 0 ? this.resolved.databases : await this.listDatabasesPaginated({});
     const tables: KtxSchemaTable[] = [];
     for (const database of databases) {
       const scopedNames = input.tableScope

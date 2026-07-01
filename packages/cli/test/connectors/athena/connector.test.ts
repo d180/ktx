@@ -239,6 +239,65 @@ describe('KtxAthenaScanConnector', () => {
     expect(matchingSnapshot.tables[0]?.name).toBe('orders');
   });
 
+  it('limits introspection to the configured databases scope', async () => {
+    const requestedDatabases: string[] = [];
+    const getDatabases = vi.fn(async () => ({
+      DatabaseList: [{ Name: 'analytics' }, { Name: 'raw' }, { Name: 'staging' }],
+      NextToken: undefined,
+    }));
+    const glueClient: KtxGlueClient = {
+      getDatabases,
+      getTables: vi.fn(async (input) => {
+        requestedDatabases.push(input.DatabaseName);
+        return {
+          TableList: [
+            {
+              Name: `${input.DatabaseName}_orders`,
+              TableType: 'EXTERNAL_TABLE',
+              StorageDescriptor: { Columns: [{ Name: 'id', Type: 'bigint' }] },
+            },
+          ],
+          NextToken: undefined,
+        };
+      }),
+    };
+    const clientFactory: KtxAthenaClientFactory = {
+      createAthenaClient: vi.fn(() => fakeClientFactory().createAthenaClient('us-east-1')),
+      createGlueClient: vi.fn(() => glueClient),
+    };
+
+    const connector = new KtxAthenaScanConnector({
+      connectionId: 'dw',
+      connection: { ...connection, databases: ['analytics', 'raw'] },
+      clientFactory,
+      now: () => new Date('2026-06-21T10:00:00.000Z'),
+    });
+
+    const snapshot = await connector.introspect({ connectionId: 'dw', driver: 'athena' }, { runId: 'scan-1' });
+
+    // Scope is taken from config, so the account-wide database list is never enumerated.
+    expect(getDatabases).not.toHaveBeenCalled();
+    expect(requestedDatabases).toEqual(['analytics', 'raw']);
+    expect(snapshot.scope).toMatchObject({ datasets: ['analytics', 'raw'] });
+    expect(snapshot.tables.map((t) => t.db)).toEqual(['analytics', 'raw']);
+  });
+
+  it('resolves optional env-referenced config to defaults when the variable is unset', () => {
+    const resolved = athenaConnectionConfigFromConfig({
+      connectionId: 'dw',
+      connection: {
+        driver: 'athena',
+        region: 'us-east-1',
+        s3_staging_dir: 's3://bucket/',
+        workgroup: 'env:ATHENA_WORKGROUP_UNSET',
+        catalog: 'env:GLUE_CATALOG_UNSET',
+      },
+      env: {},
+    });
+    expect(resolved.workgroup).toBe('primary');
+    expect(resolved.catalog).toBe('AwsDataCatalog');
+  });
+
   it('samples a table via Athena query execution', async () => {
     const connector = new KtxAthenaScanConnector({
       connectionId: 'dw',

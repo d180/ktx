@@ -64,7 +64,8 @@ describe('KtxAthenaDialect', () => {
 
   it('uses unit-separator (U+001F) as the array_join delimiter', () => {
     const sql = dialect.getSampleValueAggregation('SELECT value FROM t');
-    const separatorIndex = sql.indexOf("array_join(array_agg(CAST(value AS VARCHAR)), '") + 
+    const separatorIndex =
+      sql.indexOf("array_join(array_agg(CAST(value AS VARCHAR)), '") +
       "array_join(array_agg(CAST(value AS VARCHAR)), '".length;
     expect(sql.charCodeAt(separatorIndex)).toBe(0x1f);
   });
